@@ -1,0 +1,8 @@
+* pi-packetizer
+~pi-packetizer~ is a server program for packetizing data on Raspberry Pi peripheral interfaces into the [[https://github.com/TAPR/OpenHPSDR-SVN/raw/master/Metis/Documentation/Metis-%20How%20it%20works_V1.33.pdf][Metis format]], which itself is based on the [[https://github.com/TAPR/OpenHPSDR-SVN/raw/master/Documentation/USB_protocol_V1.58.doc][HPSDR USB data protocol]]. Currently, it supports a single receiver on the I2S interface. The goal is to use the Raspberry Pi in conjunction with a FPGA-based software-defined radio (SDR) front-end, similar to the [[https://github.com/pa3gsb/Radioberry-2.x][Radioberry]], but with more flexible interchip communication interfaces, and custom SDR gateware.
+
+Future plans for the packetizer include:
+- Adding transmit support on I2S
+- Supporting multiple receivers via SPI
+
+This work is largely based on Pavel Demin's [[https://github.com/pavel-demin/red-pitaya-notes][HPSDR implementations]] for the Red Pitaya.
