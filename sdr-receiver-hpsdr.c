@@ -14,12 +14,13 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <net/if.h>
+#include <termios.h>
 #include <alsa/asoundlib.h>
 
-//#define NUM_IQ 504
-#define NUM_IQ 1008
-//#define NUM_IQ 2016
-//#define NUM_IQ 3024
+#define NUM_IQ 504*4
+//#define NUM_IQ 1008
+//#define NUM_IQ 2032
+//#define NUM_IQ 3048
 //#define NUM_IQ 32256
 
 /* volatile uint32_t *rx_freq; */
@@ -44,10 +45,16 @@ int active_thread = 0;
 snd_pcm_t *capture_handle;
 int err = 0;
 
+int uart0_filestream = -1;
+unsigned char txbuffer[128];
+uint32_t prevfreq = 0;
+
 void process_ep2(uint8_t *frame);
 void *handler_ep6(void *arg);
 
 int init_soundcard(char *snd_device, snd_pcm_t **capture_handle, snd_pcm_hw_params_t **hw_params);
+
+int UARTOpenPort (int uart_filestream);
 
 int main(int argc, char *argv[])
 {
@@ -67,7 +74,7 @@ int main(int argc, char *argv[])
   int yes = 1;
   uint8_t chan = 0;
   long number;
-
+  
   /* for(i = 0; i < 8; ++i) */
   /* { */
   /*   errno = 0; */
@@ -101,6 +108,15 @@ int main(int argc, char *argv[])
     perror("initsound");
     return EXIT_FAILURE;
   }
+
+  // Initialize UART
+  uart0_filestream = UARTOpenPort(uart0_filestream);
+  /* sprintf(txbuffer, "MD00;"); */
+  /* int count = write(uart0_filestream, &txbuffer[0], strlen(txbuffer)); */
+  /* if (count < 0) { */
+  /*   perror("Error - Could not write to UART device"); */
+  /*   exit(1); */
+  /* } */
   
   // _SC_PAGESIZE is the page size in bytes (4096 on Intel), rx_data is 32 pages in size
   //rx_data = (uint8_t*) malloc(32*sysconf(_SC_PAGESIZE)*sizeof(uint8_t));
@@ -237,13 +253,16 @@ int main(int argc, char *argv[])
   close(sock_ep2);
   free(rx_data);
   snd_pcm_close(capture_handle);
- 
+
+  close(uart0_filestream);
+  
   return EXIT_SUCCESS;
 }
 
 void process_ep2(uint8_t *frame)
 {
   uint32_t freq;
+  /* uint32_t freq, freq_div_100; */
 
   switch(frame[0])
   {
@@ -277,8 +296,19 @@ void process_ep2(uint8_t *frame)
     case 5:
       /* set rx phase increment */
       freq = ntohl(*(uint32_t *)(frame + 1));
+      //freq_div_100 = freq/100;
       if(freq < freq_min || freq > freq_max) break;
       rx_freq[0] = (uint32_t)floor(freq / 122.88e6 * (1 << 30) + 0.5);
+      if (freq != prevfreq) {
+	sprintf(txbuffer, "FA%d;", freq);
+	/* printf("%s\n", txbuffer); */
+	int count = write(uart0_filestream, &txbuffer[0], strlen(txbuffer));
+	if (count < 0) {
+	  perror("Error - Could not write to UART device");
+	  exit(1);
+	}
+	prevfreq = freq;
+      }
       break;
     case 6:
     case 7:
@@ -463,6 +493,7 @@ void *handler_ep6(void *arg)
         memcpy(pointer+1, rx_data + data_offset+2, 1);
         memcpy(pointer+2, rx_data + data_offset+1, 1);
 	data_offset += p/2;	/* Advance to I */
+	
 	pointer += 5;		/* Advance buffer pointer 5 bytes (skip mic data) */
       }
     }
@@ -535,4 +566,48 @@ int init_soundcard(char *snd_device, snd_pcm_t **capture_handle, snd_pcm_hw_para
     perror("cannot start soundcard");
     return(-1);
   }
+}
+
+int UARTOpenPort (int uart_filestream) {
+  uart_filestream = -1;
+	
+  // OPEN THE UART
+  // The flags (defined in fcntl.h):
+  //	Access modes (use 1 of these):
+  //		O_RDONLY - Open for reading only.
+  //		O_RDWR - Open for reading and writing.
+  //		O_WRONLY - Open for writing only.
+  //
+  //	O_NDELAY / O_NONBLOCK (same function) - Enables nonblocking mode. When set read requests on the file can return immediately with a failure status
+  //	if there is no input immediately available (instead of blocking). Likewise, write requests can also return
+  //	immediately with a failure status if the output can't be written immediately.
+  //
+  //	O_NOCTTY - When set and path identifies a terminal device, open() shall not cause the terminal device to become the controlling terminal for the process.
+  uart_filestream = open("/dev/serial0", O_RDWR | O_NOCTTY | O_NDELAY);		// Open in non-blocking read/write mode
+  if (uart_filestream == -1)
+    {
+      perror("Error - Could not open UART device");
+      exit(1);
+    }
+  
+  // CONFIGURE THE UART
+  // The flags (defined in /usr/include/termios.h - see http://pubs.opengroup.org/onlinepubs/007908799/xsh/termios.h.html):
+  //	Baud rate:- B1200, B2400, B4800, B9600, B19200, B38400, B57600, B115200, B230400, B460800, B500000, B576000, B921600, B1000000, B1152000, B1500000, B2000000, B2500000, B3000000, B3500000, B4000000
+  //	CSIZE:- CS5, CS6, CS7, CS8
+  //	CLOCAL - Ignore modem status lines
+  //	CREAD - Enable receiver
+  //	IGNPAR = Ignore characters with parity errors
+  //	ICRNL - Map CR to NL on input (Use for ASCII comms where you want to auto correct end of line characters - don't use for bianry comms!)
+  //	PARENB - Parity enable
+  //	PARODD - Odd parity (else even)
+  struct termios options;
+  tcgetattr(uart_filestream, &options);
+  options.c_cflag = B115200 | CS8 | CLOCAL | CREAD;		//<Set baud rate
+  options.c_iflag = IGNPAR;
+  options.c_oflag = 0;
+  options.c_lflag = 0;
+  tcflush(uart_filestream, TCIFLUSH);
+  tcsetattr(uart_filestream, TCSANOW, &options);
+
+  return(uart_filestream);
 }

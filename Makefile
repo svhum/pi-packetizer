@@ -7,6 +7,12 @@ packetizer: packetizer.c
 sdr-receiver-hpsdr: sdr-receiver-hpsdr.c
 	$(GCC) $(CFLAGS) -o $@ $^ -lm -lpthread -lasound
 
+spitest: spitest.c
+	$(GCC) -o $@ $^
+
+serial-test: serial-test.c
+	$(GCC) -o $@ $^
+
 #checkpointers: checkpointers.c
 #	$(GCC) -o $@ $^
 
