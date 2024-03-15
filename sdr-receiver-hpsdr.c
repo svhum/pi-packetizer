@@ -483,18 +483,20 @@ void *handler_ep6(void *arg)
       for(j = 0; j < n; ++j)
       {
 	// Write most-significant 24 bits of I to buffer
-        memcpy(pointer, rx_data + data_offset+3, 1);
-        memcpy(pointer+1, rx_data + data_offset+2, 1);
-        memcpy(pointer+2, rx_data + data_offset+1, 1);
-	data_offset += p/2;	/* Advance to Q */
-	pointer += 3;		/* Advance buffer pointer 3 bytes */
+        memcpy(pointer+3, rx_data + data_offset+3, 1);
+        memcpy(pointer+4, rx_data + data_offset+2, 1);
+        memcpy(pointer+5, rx_data + data_offset+1, 1);
+	//data_offset += p/2;	/* Advance to Q */
+	//pointer += 3;		/* Advance buffer pointer 3 bytes */
 	
-        memcpy(pointer, rx_data + data_offset+3, 1);
-        memcpy(pointer+1, rx_data + data_offset+2, 1);
-        memcpy(pointer+2, rx_data + data_offset+1, 1);
-	data_offset += p/2;	/* Advance to I */
-	
-	pointer += 5;		/* Advance buffer pointer 5 bytes (skip mic data) */
+        memcpy(pointer, rx_data + data_offset+3+p/2, 1);
+        memcpy(pointer+1, rx_data + data_offset+2+p/2, 1);
+        memcpy(pointer+2, rx_data + data_offset+1+p/2, 1);
+	//data_offset += p/2;	/* Advance to I */
+	//pointer += 5;		/* Advance buffer pointer 5 bytes (skip mic data) */
+
+	data_offset += p;	/* Advance buffer pointer to next I/Qsample */
+	pointer += 8;		/* Advance buffer pointer 3+3+2 bytes (skip mic data) */
       }
     }
 
