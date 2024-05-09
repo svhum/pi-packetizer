@@ -110,13 +110,20 @@ int main(int argc, char *argv[])
   }
 
   // Initialize UART
+  int count;
   uart0_filestream = UARTOpenPort(uart0_filestream);
-  /* sprintf(txbuffer, "MD00;"); */
-  /* int count = write(uart0_filestream, &txbuffer[0], strlen(txbuffer)); */
-  /* if (count < 0) { */
-  /*   perror("Error - Could not write to UART device"); */
-  /*   exit(1); */
-  /* } */
+  sprintf(txbuffer, "MD00;");
+  count = write(uart0_filestream, &txbuffer[0], strlen(txbuffer));
+  if (count < 0) {
+    perror("Error - Could not write to UART device");
+    exit(1);
+  }
+  sprintf(txbuffer, "FB0;");
+  count = write(uart0_filestream, &txbuffer[0], strlen(txbuffer));
+  if (count < 0) {
+    perror("Error - Could not write to UART device");
+    exit(1);
+  }
   
   // _SC_PAGESIZE is the page size in bytes (4096 on Intel), rx_data is 32 pages in size
   //rx_data = (uint8_t*) malloc(32*sysconf(_SC_PAGESIZE)*sizeof(uint8_t));
@@ -301,7 +308,7 @@ void process_ep2(uint8_t *frame)
       rx_freq[0] = (uint32_t)floor(freq / 122.88e6 * (1 << 30) + 0.5);
       if (freq != prevfreq) {
 	sprintf(txbuffer, "FA%d;", freq);
-	/* printf("%s\n", txbuffer); */
+	printf("%s\n", txbuffer);
 	int count = write(uart0_filestream, &txbuffer[0], strlen(txbuffer));
 	if (count < 0) {
 	  perror("Error - Could not write to UART device");
