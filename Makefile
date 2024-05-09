@@ -16,5 +16,8 @@ serial-test: serial-test.c
 #checkpointers: checkpointers.c
 #	$(GCC) -o $@ $^
 
+reset-cmod: reset-cmod.c
+	$(GCC) -o $@ $^ -lwiringPi
+
 clean:
 	rm -f packetizer sdr-receiver-hpsdr
