@@ -1,3 +1,8 @@
+# PREFIX is environment variable, but if it is not set, then set default value
+ifeq ($(PREFIX),)
+    PREFIX := $(HOME)/.local
+endif
+
 GCC=gcc
 CFLAGS = -O3 -D_GNU_SOURCE
 
@@ -18,6 +23,10 @@ serial-test: serial-test.c
 
 reset-cmod: reset-cmod.c
 	$(GCC) -o $@ $^ -lwiringPi
+
+install: reset-cmod sdr-receiver-hpsdr
+	cp reset-cmod $(PREFIX)/bin
+	cp sdr-receiver-hpsdr $(PREFIX)/bin
 
 clean:
 	rm -f packetizer sdr-receiver-hpsdr
