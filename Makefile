@@ -4,13 +4,18 @@ ifeq ($(PREFIX),)
 endif
 
 GCC=gcc
+GPP=g++
 CFLAGS = -O3 -D_GNU_SOURCE
+CPPFLAGS = -fpermissive
 
 packetizer: packetizer.c
 	$(GCC) -o $@ $^ -lasound
 
-freqmeas: freqmeas.c
-	$(GCC) -o $@ $^ -lasound
+freqmeas: freqmeas.cpp si5351.h si5351.cpp
+	$(GPP) $(CPPFLAGS) -o $@ $^ -lasound
+
+si5351test: si5351test.cpp si5351.h si5351.cpp
+	$(GPP) $(CPPFLAGS) -o $@ $^
 
 sdr-receiver-hpsdr: sdr-receiver-hpsdr.c
 	$(GCC) $(CFLAGS) -o $@ $^ -lm -lpthread -lasound
@@ -32,4 +37,4 @@ install: reset-cmod sdr-receiver-hpsdr
 	cp sdr-receiver-hpsdr $(PREFIX)/bin
 
 clean:
-	rm -f packetizer sdr-receiver-hpsdr
+	rm -f packetizer sdr-receiver-hpsdr reset-cmod spitest freqmeas

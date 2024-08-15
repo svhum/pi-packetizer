@@ -2,8 +2,12 @@
 #include <errno.h>
 #include <math.h>
 #include <alsa/asoundlib.h>
+#include "si5351.h"
 
 #define NUM_IQ 504
+#define SI5351_I2C_ADDRESS 0x60
+
+Si5351 si5351(SI5351_I2C_ADDRESS);
 
 int init_soundcard(char *snd_device, snd_pcm_t **capture_handle, snd_pcm_hw_params_t **hw_params);
 
@@ -21,6 +25,9 @@ int main(int argc, char *argv[])
     fprintf(stderr, "Usage: packetizer soundcard-interface\n");
     return EXIT_FAILURE;
   }
+
+  si5351.init(SI5351_CRYSTAL_LOAD_8PF, 0, 0);
+
   char *snd_device = argv[1];
   printf("# Device: %s\n", snd_device);
   
@@ -42,7 +49,7 @@ int main(int argc, char *argv[])
   //char wav_data[MAX_BUF_SIZE * 4];
   int32_t wav_data[NUM_IQ * 2];	/* L+R */
 
-  for (int seg=0; seg < 1; seg++) {
+  while (1) { 
   
     if ((err = snd_pcm_readi(capture_handle, wav_data, NUM_IQ)) != NUM_IQ) {
       perror("read from audio interface failed");
@@ -66,7 +73,9 @@ int main(int argc, char *argv[])
 
 	int k = 0, N = 0, found, eof = 0;
     double dt = 1.0/48000.0;
-	double m, dx, zA, zB, T, Tavg = 0;
+	double m, dx, zA, zB, T, Tavg = 0, favg, favg_cHz;
+	unsigned long long ullFreqHz = 0;	
+	unsigned long long ullFreqHz_tune;	
 
 	while (!eof) {
     	// Find first positive-going zero crossing
@@ -74,11 +83,13 @@ int main(int argc, char *argv[])
     	while (!found && !eof) {
 			if (wav_data[k+2] >= 0 && wav_data[k] < 0)
 				found = 1;
-			else if (k+2 < NUM_IQ*2)
-				k += 2;
-			else {
-				printf("EOF1\n");
-				eof = 1;
+			else { 
+				if (k+4 < NUM_IQ*2)
+					k += 2;
+				else {
+					//printf("EOF1: k = %d\n", k);
+					eof = 1;
+				}
 			}
     	}
 		//printf("# First zero crossing @ %d: (%d, %d)\n", k/2, wav_data[k]/2, wav_data[k+2]/2);
@@ -94,12 +105,14 @@ int main(int argc, char *argv[])
     	while (!found && !eof) {
 			if (wav_data[k+2] >= 0 && wav_data[k] < 0)
 				found = 1;
-			else if (k+2 < NUM_IQ*2)
-				k += 2;
 			else {
-				printf("EOF2\n");
-				eof = 1;
-			}
+				if (k+4 < NUM_IQ*2)
+					k += 2;
+				else {
+					//printf("EOF2: k = %d\n\n", k);
+					eof = 1;
+				}
+			}	
     	}
 		//printf("# Second zero crossing @ %d: (%d, %d)\n", k/2, wav_data[k]/2, wav_data[k+2]/2);
     	if (!eof) {
@@ -111,12 +124,25 @@ int main(int argc, char *argv[])
 			N += 1;
 		}
 
-		if (!eof)
-    		printf("# k = %d, T = %e, f = %e\n", k, T, 1/T);
+		if (!eof && 0)
+    		printf("# k = %4d, T = %e, f = %e\n", k, T, 1/T);
+
 		k += 2;
 	}
-  Tavg /= N;
-  printf("# Tavg = %e, favg = %e\n", Tavg, 1/Tavg);
+	if (N == 0) {
+		Tavg = 0;
+		favg = 0;
+		ullFreqHz = 0;
+	}
+	else {
+  		Tavg /= N;
+		favg = 1/Tavg;
+		favg_cHz = round(favg * 100);
+		ullFreqHz = (unsigned long long)(favg_cHz);
+	}
+  ullFreqHz_tune = ullFreqHz + 1407400000;
+  si5351.set_freq(ullFreqHz_tune, SI5351_CLK0);
+  printf("# Tavg = %e, favg = %.20e %llu %llu\n", Tavg, favg, ullFreqHz, ullFreqHz_tune);
   }
   
   snd_pcm_close(capture_handle);
@@ -153,7 +179,7 @@ int init_soundcard(char *snd_device, snd_pcm_t **capture_handle, snd_pcm_hw_para
     return(-1);
   }
 
-  signed int srate = 96000;
+  unsigned int srate = 48000;
   if (err = snd_pcm_hw_params_set_rate_near(*capture_handle, *hw_params, &srate, 0)) {
     perror("cannot set sample rate");
     return(-1);
@@ -185,4 +211,6 @@ int init_soundcard(char *snd_device, snd_pcm_t **capture_handle, snd_pcm_hw_para
     perror("cannot start soundcard");
     return(-1);
   }
+
+  return(0);
 }
