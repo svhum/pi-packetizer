@@ -33,7 +33,8 @@ Si5351 si5351(SI5351_I2C_ADDRESS);
 int OpenSerDev (const char *dev);
 int writestr(int uart_filestream, const char *str, size_t bytes);
 
-void set_RX_freq(uint64_t freq_cHz);
+void set_RX_freq(uint64_t freq_Hz);
+void set_TX_freq(uint64_t freq_Hz);
 
 int init_soundcard(char *snd_device, snd_pcm_t **capture_handle, snd_pcm_hw_params_t **hw_params);
 
@@ -43,6 +44,7 @@ void* freqmeas(void* data);
 // Global variables
 int tx = 0;
 int mode = 2;			/* 0 = I/Q, 1 = LSB, 2 = USB, 12 = DUSB */
+unsigned long freq = 14074000;
 
 snd_pcm_t *capture_handle;
 snd_pcm_hw_params_t *hw_params;
@@ -61,7 +63,6 @@ int main(int argc, char *argv[]) {
   unsigned char txbuffer[128];
 
   // Frequency variables
-  unsigned long freq = 14074000;
   unsigned long freq_a = 14064000;
   unsigned long freq_b = FCENT+FCORR;
   unsigned long phasediff = freq_b*65536/FSAMP;
@@ -379,6 +380,29 @@ void set_RX_freq(uint64_t freq_Hz) {
   return;
 }
 
+void set_TX_freq(uint64_t freq_Hz) {
+  uint8_t pll_div;
+  uint64_t freq_cHz = freq_Hz*100;
+  if (freq_Hz >= 6000000 && freq_Hz < 7500000)
+    pll_div = 100;
+  else if (freq_Hz >= 7500000 && freq_Hz < 10000000)
+    pll_div = 80;
+  else if (freq_Hz >= 10000000 && freq_Hz < 15000000)
+    pll_div = 60; 
+  else if (freq_Hz >= 15000000 && freq_Hz < 22500000)
+    pll_div = 40;
+  else
+    return;
+
+#ifdef __arm__
+  si5351.set_freq_manual(freq_cHz, freq_cHz*pll_div, SI5351_CLK0);
+  si5351.set_freq_manual(freq_cHz, freq_cHz*pll_div, SI5351_CLK1);
+  si5351.set_phase(SI5351_CLK0, 0); 
+  si5351.set_phase(SI5351_CLK1, 2*pll_div);
+#endif
+  return;
+}
+
 void* freqmeas(void* data)
 {
   int err;
@@ -471,11 +495,17 @@ void* freqmeas(void* data)
       }
 
       if (ullFreqHz == 0) {
-	// Disable Si5351 output
+	// Disable Si5351 output?
+#ifdef __arm__
+	si5351.output_enable(SI5351_CLK0, 0)
+	si5351.output_enable(SI5351_CLK0, 1)
+#endif
       }
       else {
-	ullFreqHz_tune = ullFreqHz + 1407400000;
-	//si5351.set_freq(ullFreqHz_tune, SI5351_CLK0);
+	ullFreqHz_tune = ullFreqHz + freq;
+#ifdef __arm__
+	set_TX_freq(ullFreqHz_tune);
+#endif
 	printf("# Tavg = %e, favg = %.20e %llu %llu\n", Tavg, favg, ullFreqHz, ullFreqHz_tune);
       }
     }
