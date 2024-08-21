@@ -5,7 +5,13 @@
 #include <unistd.h>		// Used for UART: write(), read(), close()
 #include <fcntl.h>		// Used for UART: file controls like O_RDWR
 #include <termios.h>		// Used for UART: Contains POSIX terminal control defns
+#include <pthread.h>     
+#include <alsa/asoundlib.h>
+#include <math.h>
 #include "si5351.h"
+
+#ifdef __arm__
+#endif
 
 /*
   Serial reference:
@@ -18,17 +24,30 @@
 #define FCENT 10000
 #define MAX_DF 12000
 #define SI5351_I2C_ADDRESS 0x60
+#define NUM_IQ 504
 
+#ifdef __arm__
 Si5351 si5351(SI5351_I2C_ADDRESS);
+#endif
 
 int OpenSerDev (const char *dev);
 int writestr(int uart_filestream, const char *str, size_t bytes);
 
 void set_RX_freq(uint64_t freq_cHz);
 
+int init_soundcard(char *snd_device, snd_pcm_t **capture_handle, snd_pcm_hw_params_t **hw_params);
+
+// Thread function
+void* freqmeas(void* data);
+
 // Global variables
 int tx = 0;
 int mode = 2;			/* 0 = I/Q, 1 = LSB, 2 = USB, 12 = DUSB */
+
+snd_pcm_t *capture_handle;
+snd_pcm_hw_params_t *hw_params;
+snd_pcm_uframes_t buffer_size;
+snd_pcm_uframes_t period_size;
 
 int main(int argc, char *argv[]) {
   // Serial port variables
@@ -58,19 +77,45 @@ int main(int argc, char *argv[]) {
   unsigned char sh_str[8] = "SH0000;";
   unsigned char na_str[6] = "NA00;";
 
-  if (argc != 2) {
-    fprintf(stderr, "Usage: serial-test <serial device>\n");
+  // Thread variables
+  pthread_t  thread_id;
+
+  // ALSA variables
+  int err;
+  
+  if (argc != 3) {
+    fprintf(stderr, "Usage: cmod-server <serial device> <ALSA device>\n");
     exit(1);
   }
-
+  char *serial_device = argv[1];
+  char *snd_device = argv[2];
+  
   // Open serial device
-  serdev0_filestream = OpenSerDev(argv[1]);
+  serdev0_filestream = OpenSerDev(serial_device);
 
+#ifdef __arm__
   // Initialize and set Si5351
   si5351.init(SI5351_CRYSTAL_LOAD_8PF, 0, 0);
   sleep(1);
   set_RX_freq(freq_a);
+#endif
 
+  // Initialize ALSA
+  if (err = init_soundcard(snd_device, &capture_handle, &hw_params)) {
+    perror("Error initializing sound card");
+    exit(1);
+  }
+  snd_pcm_get_params(capture_handle, &buffer_size, &period_size);
+  printf("# buffer size=%d, period size=%d\n", buffer_size, period_size);
+ 
+  // Initiate thread
+  if (pthread_create(&thread_id, NULL, freqmeas, NULL) < 0) {
+    perror("Error creating thread");
+    exit(1);
+  }
+  printf("Created new thread (%u) ... \n", thread_id);
+  // pthread_exit(NULL);		/* terminate the thread */
+  
   while (1) {
     count = read(serdev0_filestream, &cmdbuf_ch, 1);
     if (count < 0) {
@@ -118,7 +163,7 @@ int main(int argc, char *argv[]) {
 	      if ((freq - freq_a) > MAX_DF || (freq - freq_a) < 0) { // PLL and NCO need to change
 		freq_a = freq - FCENT;
 		freq_b = FCENT + FCORR;
-  	    set_RX_freq(freq_a);
+		set_RX_freq(freq_a);
 		phasediff = freq_b*65536/FSAMP;
 		//XGpio_DiscreteWrite(&sdr_cfg_reg, GPIO_CH, (curr_cfg & 0b110000000000000000) | (phasediff & 0xffff));
 	      }
@@ -217,7 +262,10 @@ int main(int argc, char *argv[]) {
     }
 
   }
-  
+
+  snd_pcm_close(capture_handle);
+  snd_pcm_hw_params_free(hw_params);
+ 
   close(serdev0_filestream);
   return(0);
 }
@@ -312,19 +360,187 @@ void set_RX_freq(uint64_t freq_Hz) {
   uint8_t pll_div;
   uint64_t freq_cHz = freq_Hz*100;
   if (freq_Hz >= 6000000 && freq_Hz < 7500000)
-		 pll_div = 100;
+    pll_div = 100;
   else if (freq_Hz >= 7500000 && freq_Hz < 10000000)
-		 pll_div = 80;
+    pll_div = 80;
   else if (freq_Hz >= 10000000 && freq_Hz < 15000000)
-		 pll_div = 60; 
+    pll_div = 60; 
   else if (freq_Hz >= 15000000 && freq_Hz < 22500000)
-		 pll_div = 40;
+    pll_div = 40;
   else
-		 return;
+    return;
 
+#ifdef __arm__
   si5351.set_freq_manual(freq_cHz, freq_cHz*pll_div, SI5351_CLK0);
   si5351.set_freq_manual(freq_cHz, freq_cHz*pll_div, SI5351_CLK1);
   si5351.set_phase(SI5351_CLK0, 0); 
-  si5351.set_phase(SI5351_CLK1, pll_div); 
+  si5351.set_phase(SI5351_CLK1, pll_div);
+#endif
   return;
+}
+
+void* freqmeas(void* data)
+{
+  int err;
+  int k = 0, N = 0, found, eof = 0;
+  double dt = 1.0/48000.0;
+  double m, dx, zA, zB, T, Tavg = 0, favg, favg_cHz;
+  unsigned long long ullFreqHz = 0;	
+  unsigned long long ullFreqHz_tune;	
+  int32_t wav_data[NUM_IQ * 2];	/* L+R */
+
+  pthread_detach(pthread_self());
+  printf("freqmeas starting\n");
+  while (1) {
+    if (tx == 1) {
+      if ((err = snd_pcm_readi(capture_handle, wav_data, NUM_IQ)) != NUM_IQ) {
+	perror("read from audio interface failed");
+	if (err == -32) // Broken pipe
+	  {
+	    if (err = snd_pcm_prepare(capture_handle)) {
+	      perror("cannot prepare audio interface for use");
+	      return(-1);
+	    }
+	  }
+	else
+	  return(-1);
+      }
+
+      while (!eof) {
+	// Find first positive-going zero crossing
+	found = 0;
+	while (!found && !eof) {
+	  if (wav_data[k+2] >= 0 && wav_data[k] < 0)
+	    found = 1;
+	  else { 
+	    if (k+4 < NUM_IQ*2)
+	      k += 2;
+	    else {
+	      //printf("EOF1: k = %d\n", k);
+	      eof = 1;
+	    }
+	  }
+	}
+	//printf("# First zero crossing @ %d: (%d, %d)\n", k/2, wav_data[k]/2, wav_data[k+2]/2);
+	if (!eof) {	
+	  m = (wav_data[k+2] - wav_data[k]) / dt;
+	  dx = -wav_data[k]/m;
+	  zA = k/2*dt+dx;
+	}
+
+	// Find next positive-going zero crossing
+	found = 0;
+	k += 2;
+	while (!found && !eof) {
+	  if (wav_data[k+2] >= 0 && wav_data[k] < 0)
+	    found = 1;
+	  else {
+	    if (k+4 < NUM_IQ*2)
+	      k += 2;
+	    else {
+	      //printf("EOF2: k = %d\n\n", k);
+	      eof = 1;
+	    }
+	  }	
+	}
+	//printf("# Second zero crossing @ %d: (%d, %d)\n", k/2, wav_data[k]/2, wav_data[k+2]/2);
+	if (!eof) {
+	  m = (wav_data[k+2] - wav_data[k]) / dt;
+	  dx = -wav_data[k]/m;
+	  zB = k/2*dt+dx;
+	  T = zB-zA;
+	  Tavg += T;
+	  N += 1;
+	}
+
+	if (!eof && 0)
+	  printf("# k = %4d, T = %e, f = %e\n", k, T, 1/T);
+
+	k += 2;
+      }
+      if (N == 0) {
+	Tavg = 0;
+	favg = 0;
+	ullFreqHz = 0;
+      }
+      else {
+	Tavg /= N;
+	favg = 1/Tavg;
+	favg_cHz = round(favg * 100);
+	ullFreqHz = (unsigned long long)(favg_cHz);
+      }
+      ullFreqHz_tune = ullFreqHz + 1407400000;
+      //si5351.set_freq(ullFreqHz_tune, SI5351_CLK0);
+      printf("# Tavg = %e, favg = %.20e %llu %llu\n", Tavg, favg, ullFreqHz, ullFreqHz_tune);
+    }
+    else
+      usleep(1000);
+  }
+  
+  pthread_exit(NULL);			/* terminate the thread */
+}
+
+
+int init_soundcard(char *snd_device, snd_pcm_t **capture_handle, snd_pcm_hw_params_t **hw_params) {
+  int err = 0;
+  
+  if (err = snd_pcm_open(&*capture_handle, snd_device, SND_PCM_STREAM_CAPTURE, 0)) {
+    perror("Cannot open audio device");
+    return(-1);
+  }
+
+  if (err = snd_pcm_hw_params_malloc(&*hw_params) < 0) {
+    perror("Cannot allocate hardware parameter structure");
+    return(-1);
+  }
+
+  if (err = snd_pcm_hw_params_any(*capture_handle, *hw_params)) {
+    perror("Cannot initialize hardware parameter structure");
+    return(-1);
+  }
+
+  if (err = snd_pcm_hw_params_set_access(*capture_handle, *hw_params, SND_PCM_ACCESS_RW_INTERLEAVED)) {
+    perror("Cannot set access type");
+    return(-1);
+  }
+
+  if (err = snd_pcm_hw_params_set_format(*capture_handle, *hw_params, SND_PCM_FORMAT_S32_LE)) {
+    perror("Cannot set sample format");
+    return(-1);
+  }
+
+  unsigned int srate = 48000;
+  if (err = snd_pcm_hw_params_set_rate_near(*capture_handle, *hw_params, &srate, 0)) {
+    perror("Cannot set sample rate");
+    return(-1);
+  }
+
+  if (err = snd_pcm_hw_params_set_channels(*capture_handle, *hw_params, 2)) {
+    perror("Cannot set channel count");
+    return(-1);
+  }
+
+  snd_pcm_uframes_t period = NUM_IQ;
+  int dir = 0;
+  if (err = snd_pcm_hw_params_set_period_size_near(*capture_handle, *hw_params, &period, &dir)) {
+     perror("Cannot set period");
+    return(-1);
+  }
+ 
+  if (err = snd_pcm_hw_params(*capture_handle, *hw_params)) {
+    perror("Cannot set parameters");
+    return(-1);
+  }
+
+  if (err = snd_pcm_prepare(*capture_handle)) {
+    perror("Cannot prepare audio interface for use");
+    return(-1);
+  }
+
+  if (err = snd_pcm_start(*capture_handle)) {
+    perror("Cannot start soundcard");
+    return(-1);
+  }
+
+  return(0);
 }
