@@ -32,6 +32,9 @@ serial-test: serial-test.c
 reset-cmod: reset-cmod.c
 	$(GCC) -o $@ $^ -lwiringPi
 
+test-threads: test-threads.c
+	$(GCC) -o $@ $^ -lpthread
+
 install: reset-cmod sdr-receiver-hpsdr
 	cp reset-cmod $(PREFIX)/bin
 	cp sdr-receiver-hpsdr $(PREFIX)/bin
