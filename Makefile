@@ -26,6 +26,9 @@ spitest: spitest.c
 serial-test: serial-test.c
 	$(GCC) -o $@ $^
 
+cmod-server: cmod-server.cpp si5351.h si5351.cpp
+	$(GPP) $(CPPFLAGS) -o $@ $^
+
 #checkpointers: checkpointers.c
 #	$(GCC) -o $@ $^
 
