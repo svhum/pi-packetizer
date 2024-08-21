@@ -469,9 +469,15 @@ void* freqmeas(void* data)
 	favg_cHz = round(favg * 100);
 	ullFreqHz = (unsigned long long)(favg_cHz);
       }
-      ullFreqHz_tune = ullFreqHz + 1407400000;
-      //si5351.set_freq(ullFreqHz_tune, SI5351_CLK0);
-      printf("# Tavg = %e, favg = %.20e %llu %llu\n", Tavg, favg, ullFreqHz, ullFreqHz_tune);
+
+      if (ullFreqHz == 0) {
+	// Disable Si5351 output
+      }
+      else {
+	ullFreqHz_tune = ullFreqHz + 1407400000;
+	//si5351.set_freq(ullFreqHz_tune, SI5351_CLK0);
+	printf("# Tavg = %e, favg = %.20e %llu %llu\n", Tavg, favg, ullFreqHz, ullFreqHz_tune);
+      }
     }
     else
       usleep(1000);
