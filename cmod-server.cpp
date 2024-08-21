@@ -45,6 +45,7 @@ void* freqmeas(void* data);
 int tx = 0;
 int mode = 2;			/* 0 = I/Q, 1 = LSB, 2 = USB, 12 = DUSB */
 unsigned long freq = 14074000;
+int poll_pty = 1;
 
 snd_pcm_t *capture_handle;
 snd_pcm_hw_params_t *hw_params;
@@ -119,7 +120,7 @@ int main(int argc, char *argv[]) {
   printf("Created new thread (%u) ... \n", thread_id);
   // pthread_exit(NULL);		/* terminate the thread */
   
-  while (1) {
+  while (poll_pty) {
     count = read(serdev0_filestream, &cmdbuf_ch, 1);
     if (count < 0) {
       perror("Error reading from serial device");
@@ -261,6 +262,10 @@ int main(int argc, char *argv[]) {
 	    writestr(serdev0_filestream, &txbuffer[0], strlen(txbuffer));
 	  }
 	}
+	else if (memcmp(cmdbuf, "EX", 2) == 0) {
+	  // Exit polling loop
+	  poll_pty = 0;
+	}
       }
     }
 
@@ -270,6 +275,9 @@ int main(int argc, char *argv[]) {
   snd_pcm_hw_params_free(hw_params);
  
   close(serdev0_filestream);
+
+  printf("Exiting main thread\n");
+  pthread_exit(NULL);		/* terminate the thread */
   return(0);
 }
   
@@ -413,13 +421,19 @@ void* freqmeas(void* data)
   unsigned long long ullFreqcHz = 0;	
   unsigned long long ullFreqcHz_tune;	
   int32_t wav_data[NUM_IQ * 2];	/* L+R */
-  int outputs_enabled = 1;
+  int outputs_enabled = 1, entered_tx = 0;
 
   // Initiate thread
   pthread_detach(pthread_self());
   
-  while (1) {
+  while (poll_pty) {
     if (tx == 1) {
+      // Set flag that transmission frequency was changed
+      if (entered_tx == 0) {
+	entered_tx = 1;
+	printf("Entering TX mode, outputs_enabled = %d\n", outputs_enabled);
+      }
+      
       // Read from sound card
       if ((err = snd_pcm_readi(capture_handle, wav_data, NUM_IQ)) != NUM_IQ) {
 	perror("Read from audio interface failed");
@@ -501,14 +515,18 @@ void* freqmeas(void* data)
 
       if (ullFreqcHz == 0) {
 	// Disable Si5351 output
-	outputs_enabled = 0;
+	if (outputs_enabled == 1) {
+	  printf("Silent message signal, disabling PLL outputs\n");
+	  outputs_enabled = 0;
 #ifdef __arm__
-	si5351.output_enable(SI5351_CLK0, 0);
-	si5351.output_enable(SI5351_CLK1, 0);
+	  si5351.output_enable(SI5351_CLK0, 0);
+	  si5351.output_enable(SI5351_CLK1, 0);
 #endif
+	}
       }
       else {
 	ullFreqcHz_tune = ullFreqcHz + freq*100;
+	printf("# Tavg = %e, favg = %.20e %llu %llu\n", Tavg, favg, ullFreqcHz, ullFreqcHz_tune);
 #ifdef __arm__
 	set_TX_freq(ullFreqcHz_tune);
 #endif
@@ -519,21 +537,35 @@ void* freqmeas(void* data)
 #endif
 	  outputs_enabled = 1;
 	}
-	printf("# Tavg = %e, favg = %.20e %llu %llu\n", Tavg, favg, ullFreqcHz, ullFreqcHz_tune);
       }
     }
-    else 			// In receive mode
+    else { 			// tx == 0, we are in receive mode
+      if (entered_tx == 1) {
+	// We previously were transmitting and now going back to receive mode.
+	// Restore RX frequency and phase.
+	printf("Returning to RX mode\n");
+	entered_tx = 0;
+#ifdef __arm__
+	if (mode == 0)  // For IQ passthrough, do not set DDS explicitly
+	  set_RX_freq(freq);
+	else
+	  set_RX_freq(freq_a);
+#endif
+      }
       if (outputs_enabled == 0) {
-	// Outputs might have been previously disabled by a silent message signal; re-enable
+	// Outputs might have been previously disabled by a silent TX message signal; re-enable
+	printf("Re-enabling PLL outputs\n");
+	outputs_enabled = 1;
 #ifdef __arm__
 	si5351.output_enable(SI5351_CLK0, 1);
 	si5351.output_enable(SI5351_CLK1, 1);
 #endif
-	outputs_enabled = 1;
       }
       usleep(1000);
+    }
   }
-  
+
+  printf("Closing frequency measurement thread\n");
   pthread_exit(NULL);			/* terminate the thread */
 }
 
