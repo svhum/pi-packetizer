@@ -34,7 +34,7 @@ int OpenSerDev (const char *dev);
 int writestr(int uart_filestream, const char *str, size_t bytes);
 
 void set_RX_freq(uint64_t freq_Hz);
-void set_TX_freq(uint64_t freq_Hz);
+void set_TX_freq(uint64_t freq_cHz);
 
 int init_soundcard(char *snd_device, snd_pcm_t **capture_handle, snd_pcm_hw_params_t **hw_params);
 
@@ -67,7 +67,7 @@ int main(int argc, char *argv[]) {
   unsigned long freq_b = FCENT+FCORR;
   unsigned long phasediff = freq_b*65536/FSAMP;
   char *ptr;
-  unsigned long long ullFreq_cHz = freq_a*100;	
+  //unsigned long long ullFreq_cHz = freq_a*100;	
   
   // State variables
   unsigned long curr_cfg;
@@ -99,6 +99,8 @@ int main(int argc, char *argv[]) {
   si5351.init(SI5351_CRYSTAL_LOAD_8PF, 0, 0);
   sleep(1);
   set_RX_freq(freq_a);
+  si5351.output_enable(SI5351_CLK0, 1); // Not really required at power-on
+  si5351.output_enable(SI5351_CLK1, 1); // Not really required at power-on
 #endif
 
   // Initialize ALSA
@@ -380,16 +382,15 @@ void set_RX_freq(uint64_t freq_Hz) {
   return;
 }
 
-void set_TX_freq(uint64_t freq_Hz) {
+void set_TX_freq(uint64_t freq_cHz) {
   uint8_t pll_div;
-  uint64_t freq_cHz = freq_Hz*100;
-  if (freq_Hz >= 6000000 && freq_Hz < 7500000)
+  if (freq_cHz >= 600000000 && freq_cHz < 750000000)
     pll_div = 100;
-  else if (freq_Hz >= 7500000 && freq_Hz < 10000000)
+  else if (freq_cHz >= 750000000 && freq_cHz < 1000000000)
     pll_div = 80;
-  else if (freq_Hz >= 10000000 && freq_Hz < 15000000)
+  else if (freq_cHz >= 1000000000 && freq_cHz < 1500000000)
     pll_div = 60; 
-  else if (freq_Hz >= 15000000 && freq_Hz < 22500000)
+  else if (freq_cHz >= 1500000000 && freq_cHz < 2250000000)
     pll_div = 40;
   else
     return;
@@ -409,20 +410,23 @@ void* freqmeas(void* data)
   int k = 0, N = 0, found, eof = 0;
   double dt = 1.0/48000.0;
   double m, dx, zA, zB, T, Tavg = 0, favg, favg_cHz;
-  unsigned long long ullFreqHz = 0;	
-  unsigned long long ullFreqHz_tune;	
+  unsigned long long ullFreqcHz = 0;	
+  unsigned long long ullFreqcHz_tune;	
   int32_t wav_data[NUM_IQ * 2];	/* L+R */
+  int outputs_enabled = 1;
 
+  // Initiate thread
   pthread_detach(pthread_self());
-  printf("freqmeas starting\n");
+  
   while (1) {
     if (tx == 1) {
+      // Read from sound card
       if ((err = snd_pcm_readi(capture_handle, wav_data, NUM_IQ)) != NUM_IQ) {
-	perror("read from audio interface failed");
+	perror("Read from audio interface failed");
 	if (err == -32) // Broken pipe
 	  {
 	    if (err = snd_pcm_prepare(capture_handle)) {
-	      perror("cannot prepare audio interface for use");
+	      perror("Cannot prepare audio interface for use");
 	      return(-1);
 	    }
 	  }
@@ -430,6 +434,7 @@ void* freqmeas(void* data)
 	  return(-1);
       }
 
+      // Find period
       while (!eof) {
 	// Find first positive-going zero crossing
 	found = 0;
@@ -485,31 +490,47 @@ void* freqmeas(void* data)
       if (N == 0) {
 	Tavg = 0;
 	favg = 0;
-	ullFreqHz = 0;
+	ullFreqcHz = 0;
       }
       else {
 	Tavg /= N;
 	favg = 1/Tavg;
 	favg_cHz = round(favg * 100);
-	ullFreqHz = (unsigned long long)(favg_cHz);
+	ullFreqcHz = (unsigned long long)(favg_cHz);
       }
 
-      if (ullFreqHz == 0) {
-	// Disable Si5351 output?
+      if (ullFreqcHz == 0) {
+	// Disable Si5351 output
+	outputs_enabled = 0;
 #ifdef __arm__
-	si5351.output_enable(SI5351_CLK0, 0)
-	si5351.output_enable(SI5351_CLK0, 1)
+	si5351.output_enable(SI5351_CLK0, 0);
+	si5351.output_enable(SI5351_CLK1, 0);
 #endif
       }
       else {
-	ullFreqHz_tune = ullFreqHz + freq;
+	ullFreqcHz_tune = ullFreqcHz + freq*100;
 #ifdef __arm__
-	set_TX_freq(ullFreqHz_tune);
+	set_TX_freq(ullFreqcHz_tune);
 #endif
-	printf("# Tavg = %e, favg = %.20e %llu %llu\n", Tavg, favg, ullFreqHz, ullFreqHz_tune);
+	if (outputs_enabled == 0) {
+#ifdef __arm__
+	  si5351.output_enable(SI5351_CLK0, 1);
+	  si5351.output_enable(SI5351_CLK1, 1);
+#endif
+	  outputs_enabled = 1;
+	}
+	printf("# Tavg = %e, favg = %.20e %llu %llu\n", Tavg, favg, ullFreqcHz, ullFreqcHz_tune);
       }
     }
-    else
+    else 			// In receive mode
+      if (outputs_enabled == 0) {
+	// Outputs might have been previously disabled by a silent message signal; re-enable
+#ifdef __arm__
+	si5351.output_enable(SI5351_CLK0, 1);
+	si5351.output_enable(SI5351_CLK1, 1);
+#endif
+	outputs_enabled = 1;
+      }
       usleep(1000);
   }
   
