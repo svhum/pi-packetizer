@@ -32,4 +32,7 @@ will cause ~cmod-server~ to listen for CAT commands on ~/dev/pts/1~ and use the 
 
 ~cat /proc/asound/cards~
 
+If you need to change the default sound card, use
 
+~pactl list short sinks~
+~pactl set-default-sink alsa_output.platform-snd_aloop.0.analog-stereo~
