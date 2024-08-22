@@ -25,6 +25,7 @@
 #define MAX_DF 12000
 #define SI5351_I2C_ADDRESS 0x60
 #define NUM_IQ 504
+#define MAX_SILENT_COUNT 2
 
 #ifdef __arm__
 Si5351 si5351(SI5351_I2C_ADDRESS);
@@ -37,14 +38,16 @@ void set_RX_freq(uint64_t freq_Hz);
 void set_TX_freq(uint64_t freq_cHz);
 
 int init_soundcard(char *snd_device, snd_pcm_t **capture_handle, snd_pcm_hw_params_t **hw_params);
+uint64_t meas_freq_cHz(void);
 
 // Thread function
-void* freqmeas(void* data);
+void* fsktx(void* data);
 
 // Global variables
 int tx = 0;
 int mode = 2;			/* 0 = I/Q, 1 = LSB, 2 = USB, 12 = DUSB */
 unsigned long freq = 14074000;
+unsigned long freq_a = 14064000;
 int poll_pty = 1;
 
 snd_pcm_t *capture_handle;
@@ -64,7 +67,6 @@ int main(int argc, char *argv[]) {
   unsigned char txbuffer[128];
 
   // Frequency variables
-  unsigned long freq_a = 14064000;
   unsigned long freq_b = FCENT+FCORR;
   unsigned long phasediff = freq_b*65536/FSAMP;
   char *ptr;
@@ -109,16 +111,18 @@ int main(int argc, char *argv[]) {
     perror("Error initializing sound card");
     exit(1);
   }
-  snd_pcm_get_params(capture_handle, &buffer_size, &period_size);
+  if (err = snd_pcm_get_params(capture_handle, &buffer_size, &period_size)) {
+	perror("Error setting PCM parameters");
+	exit(1);
+  }
   printf("# buffer size=%d, period size=%d\n", buffer_size, period_size);
  
   // Initiate thread
-  if (pthread_create(&thread_id, NULL, freqmeas, NULL) < 0) {
+  if (pthread_create(&thread_id, NULL, fsktx, NULL) < 0) {
     perror("Error creating thread");
     exit(1);
   }
-  printf("Created new thread (%u) ... \n", thread_id);
-  // pthread_exit(NULL);		/* terminate the thread */
+  printf("Created new thread (%u)... \n", thread_id);
   
   while (poll_pty) {
     count = read(serdev0_filestream, &cmdbuf_ch, 1);
@@ -384,6 +388,8 @@ void set_RX_freq(uint64_t freq_Hz) {
 #ifdef __arm__
   si5351.set_freq_manual(freq_cHz, freq_cHz*pll_div, SI5351_CLK0);
   si5351.set_freq_manual(freq_cHz, freq_cHz*pll_div, SI5351_CLK1);
+  //si5351.set_clock_invert(SI5351_CLK1, 0);
+  //si5351.set_clock_invert(SI5351_CLK1, 0);
   si5351.set_phase(SI5351_CLK0, 0); 
   si5351.set_phase(SI5351_CLK1, pll_div);
 #endif
@@ -404,24 +410,26 @@ void set_TX_freq(uint64_t freq_cHz) {
     return;
 
 #ifdef __arm__
-  si5351.set_freq_manual(freq_cHz, freq_cHz*pll_div, SI5351_CLK0);
-  si5351.set_freq_manual(freq_cHz, freq_cHz*pll_div, SI5351_CLK1);
-  si5351.set_phase(SI5351_CLK0, 0); 
-  si5351.set_phase(SI5351_CLK1, 2*pll_div);
+  //si5351.set_freq_manual(freq_cHz, freq_cHz*pll_div, SI5351_CLK0);
+  //si5351.set_freq_manual(freq_cHz, freq_cHz*pll_div, SI5351_CLK1);
+  //si5351.set_phase(SI5351_CLK0, 0); 
+  //si5351.set_phase(SI5351_CLK1, 2*pll_div);
+  
+  //si5351.set_phase(SI5351_CLK0, 0); 
+  //si5351.set_phase(SI5351_CLK1, 0);
+  si5351.set_freq(freq_cHz, SI5351_CLK0);
+  si5351.set_freq(freq_cHz, SI5351_CLK1);
+  //si5351.set_clock_invert(SI5351_CLK1, 0);
+  //si5351.set_clock_invert(SI5351_CLK1, 1);
 #endif
   return;
 }
 
-void* freqmeas(void* data)
+void* fsktx(void* data)
 {
-  int err;
-  int k = 0, N = 0, found, eof = 0;
-  double dt = 1.0/48000.0;
-  double m, dx, zA, zB, T, Tavg = 0, favg, favg_cHz;
-  unsigned long long ullFreqcHz = 0;	
-  unsigned long long ullFreqcHz_tune;	
-  int32_t wav_data[NUM_IQ * 2];	/* L+R */
+  uint64_t ullFreqcHz_tune, ullFreqcHz;	
   int outputs_enabled = 1, entered_tx = 0;
+  int silent_count;
 
   // Initiate thread
   pthread_detach(pthread_self());
@@ -433,19 +441,92 @@ void* freqmeas(void* data)
 	entered_tx = 1;
 	printf("Entering TX mode, outputs_enabled = %d\n", outputs_enabled);
       }
-      
+     
+	 ullFreqcHz = meas_freq_cHz();
+
+      if (ullFreqcHz == 0) {
+			  silent_count++;
+	// Disable Si5351 output
+	if (outputs_enabled == 1 && silent_count > MAX_SILENT_COUNT) {
+	  printf("Silent message signal, disabling PLL outputs\n");
+	  outputs_enabled = 0;
+#ifdef __arm__
+	  si5351.output_enable(SI5351_CLK0, 0);
+	  si5351.output_enable(SI5351_CLK1, 0);
+#endif
+	}
+      }
+      else { // Message present on audio
+	silent_count = 0;
+	ullFreqcHz_tune = ullFreqcHz + freq*100;
+#ifdef __arm__
+	set_TX_freq(ullFreqcHz_tune);
+#endif
+	if (outputs_enabled == 0) {
+#ifdef __arm__
+	  si5351.output_enable(SI5351_CLK0, 1);
+	  si5351.output_enable(SI5351_CLK1, 1);
+#endif
+	  outputs_enabled = 1;
+	}
+
+    //printf("# Tavg = %e, favg = %.20e %llu %llu\n", Tavg, favg, ullFreqcHz, ullFreqcHz_tune);
+	printf("# freq = %llu, freq_tune = %llu\n", ullFreqcHz, ullFreqcHz_tune);
+      }
+
+    }
+    else { 			// tx == 0, we are in receive mode
+      if (entered_tx == 1) {
+	// We previously were transmitting and now going back to receive mode.
+	// Restore RX frequency and phase.
+	printf("Returning to RX mode\n");
+	entered_tx = 0;
+#ifdef __arm__
+	if (mode == 0)  // For IQ passthrough, do not set DDS explicitly
+	  set_RX_freq(freq);
+	else
+	  set_RX_freq(freq_a);
+#endif
+      }
+      if (outputs_enabled == 0) {
+	// Outputs might have been previously disabled by a silent TX message signal; re-enable
+	printf("Re-enabling PLL outputs\n");
+	outputs_enabled = 1;
+#ifdef __arm__
+	si5351.output_enable(SI5351_CLK0, 1);
+	si5351.output_enable(SI5351_CLK1, 1);
+#endif
+      }
+      usleep(1000);
+    }
+  }
+
+  printf("Closing frequency measurement thread\n");
+  pthread_exit(NULL);			/* terminate the thread */
+}
+
+uint64_t meas_freq_cHz(void) {
+
+  int err;
+  int k = 0, N = 0, found, eof = 0;
+  double dt = 1.0/48000.0;
+  double m, dx, zA, zB, T, Tavg = 0, favg, favg_cHz;
+  uint64_t ullFreqcHz = 0;	
+  int32_t wav_data[NUM_IQ * 2];	/* L+R */
+
       // Read from sound card
       if ((err = snd_pcm_readi(capture_handle, wav_data, NUM_IQ)) != NUM_IQ) {
+			  fprintf(stderr, "err = %d\n", err);
 	perror("Read from audio interface failed");
 	if (err == -32) // Broken pipe
 	  {
 	    if (err = snd_pcm_prepare(capture_handle)) {
 	      perror("Cannot prepare audio interface for use");
-	      return(-1);
+	      exit(1);
 	    }
 	  }
 	else
-	  return(-1);
+	 exit(1);
       }
 
       // Find period
@@ -513,62 +594,8 @@ void* freqmeas(void* data)
 	ullFreqcHz = (unsigned long long)(favg_cHz);
       }
 
-      if (ullFreqcHz == 0) {
-	// Disable Si5351 output
-	if (outputs_enabled == 1) {
-	  printf("Silent message signal, disabling PLL outputs\n");
-	  outputs_enabled = 0;
-#ifdef __arm__
-	  si5351.output_enable(SI5351_CLK0, 0);
-	  si5351.output_enable(SI5351_CLK1, 0);
-#endif
-	}
-      }
-      else {
-	ullFreqcHz_tune = ullFreqcHz + freq*100;
-	printf("# Tavg = %e, favg = %.20e %llu %llu\n", Tavg, favg, ullFreqcHz, ullFreqcHz_tune);
-#ifdef __arm__
-	set_TX_freq(ullFreqcHz_tune);
-#endif
-	if (outputs_enabled == 0) {
-#ifdef __arm__
-	  si5351.output_enable(SI5351_CLK0, 1);
-	  si5351.output_enable(SI5351_CLK1, 1);
-#endif
-	  outputs_enabled = 1;
-	}
-      }
-    }
-    else { 			// tx == 0, we are in receive mode
-      if (entered_tx == 1) {
-	// We previously were transmitting and now going back to receive mode.
-	// Restore RX frequency and phase.
-	printf("Returning to RX mode\n");
-	entered_tx = 0;
-#ifdef __arm__
-	if (mode == 0)  // For IQ passthrough, do not set DDS explicitly
-	  set_RX_freq(freq);
-	else
-	  set_RX_freq(freq_a);
-#endif
-      }
-      if (outputs_enabled == 0) {
-	// Outputs might have been previously disabled by a silent TX message signal; re-enable
-	printf("Re-enabling PLL outputs\n");
-	outputs_enabled = 1;
-#ifdef __arm__
-	si5351.output_enable(SI5351_CLK0, 1);
-	si5351.output_enable(SI5351_CLK1, 1);
-#endif
-      }
-      usleep(1000);
-    }
-  }
-
-  printf("Closing frequency measurement thread\n");
-  pthread_exit(NULL);			/* terminate the thread */
+	  return(ullFreqcHz);
 }
-
 
 int init_soundcard(char *snd_device, snd_pcm_t **capture_handle, snd_pcm_hw_params_t **hw_params) {
   int err = 0;

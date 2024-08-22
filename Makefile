@@ -6,7 +6,7 @@ endif
 GCC=gcc
 GPP=g++
 CFLAGS = -O3 -D_GNU_SOURCE
-CPPFLAGS = -fpermissive
+CPPFLAGS = -fpermissive -D__arm__
 
 packetizer: packetizer.c
 	$(GCC) -o $@ $^ -lasound
