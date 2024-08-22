@@ -392,6 +392,7 @@ void set_RX_freq(uint64_t freq_Hz) {
   //si5351.set_clock_invert(SI5351_CLK1, 0);
   si5351.set_phase(SI5351_CLK0, 0); 
   si5351.set_phase(SI5351_CLK1, pll_div);
+  si5351.pll_reset(SI5351_PLLA);
 #endif
   return;
 }
