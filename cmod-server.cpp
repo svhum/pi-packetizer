@@ -10,9 +10,6 @@
 #include <math.h>
 #include "si5351.h"
 
-#ifdef __arm__
-#endif
-
 /*
   Serial reference:
   https://blog.mbedded.ninja/programming/operating-systems/linux/linux-serial-ports-using-c-cpp/
@@ -56,6 +53,9 @@ snd_pcm_uframes_t buffer_size;
 snd_pcm_uframes_t period_size;
 
 int main(int argc, char *argv[]) {
+  // Behaviour variables
+  int rx_only = 0;		// If set, TX frequency is not modulated by server
+  
   // Serial port variables
   int serdev0_filestream;
 
@@ -117,12 +117,14 @@ int main(int argc, char *argv[]) {
   }
   printf("# buffer size=%d, period size=%d\n", buffer_size, period_size);
  
-  // Initiate thread
-  if (pthread_create(&thread_id, NULL, fsktx, NULL) < 0) {
-    perror("Error creating thread");
-    exit(1);
+  // Initiate TX modulator thread if needed
+  if (!rx_only) {
+    if (pthread_create(&thread_id, NULL, fsktx, NULL) < 0) {
+      perror("Error creating thread");
+      exit(1);
+    }
+    printf("Created new thread (%u)... \n", thread_id);
   }
-  printf("Created new thread (%u)... \n", thread_id);
   
   while (poll_pty) {
     count = read(serdev0_filestream, &cmdbuf_ch, 1);
@@ -415,13 +417,17 @@ void set_TX_freq(uint64_t freq_cHz) {
   //si5351.set_freq_manual(freq_cHz, freq_cHz*pll_div, SI5351_CLK1);
   //si5351.set_phase(SI5351_CLK0, 0); 
   //si5351.set_phase(SI5351_CLK1, 2*pll_div);
-  
-  //si5351.set_phase(SI5351_CLK0, 0); 
-  //si5351.set_phase(SI5351_CLK1, 0);
+
+  // Restore phase shift to 0 and then invert outputs
+  si5351.set_phase(SI5351_CLK0, 0); 
+  si5351.set_phase(SI5351_CLK1, 0);
+  si5351.pll_reset(SI5351_PLLA);
+  si5351.set_clock_invert(SI5351_CLK0, 0);
+  si5351.set_clock_invert(SI5351_CLK1, 1);
+
+  // Set TX frequency
   si5351.set_freq(freq_cHz, SI5351_CLK0);
   si5351.set_freq(freq_cHz, SI5351_CLK1);
-  //si5351.set_clock_invert(SI5351_CLK1, 0);
-  //si5351.set_clock_invert(SI5351_CLK1, 1);
 #endif
   return;
 }
