@@ -6,6 +6,7 @@
 
 #define NUM_IQ 504
 #define SI5351_I2C_ADDRESS 0x60
+#define SAMPRATE 48000
 
 Si5351 si5351(SI5351_I2C_ADDRESS);
 
@@ -20,13 +21,16 @@ int main(int argc, char *argv[])
   /* return(-1); */
 
   int err = 0;
+  int control_si5351 = 0;     // Control Si5351 frequency based on measured frequency if set
   
   if (argc != 2) {
     fprintf(stderr, "Usage: packetizer soundcard-interface\n");
     return EXIT_FAILURE;
   }
 
-  si5351.init(SI5351_CRYSTAL_LOAD_8PF, 0, 0);
+  if (control_si5351)
+    si5351.init(SI5351_CRYSTAL_LOAD_8PF, 0, 0);
+  
 
   char *snd_device = argv[1];
   printf("# Device: %s\n", snd_device);
@@ -72,7 +76,7 @@ int main(int argc, char *argv[])
 #endif
 
 	int k = 0, N = 0, found, eof = 0;
-    double dt = 1.0/48000.0;
+    double dt = 1.0/SAMPRATE;
 	double m, dx, zA, zB, T, Tavg = 0, favg, favg_cHz;
 	unsigned long long ullFreqHz = 0;	
 	unsigned long long ullFreqHz_tune;	
@@ -141,7 +145,8 @@ int main(int argc, char *argv[])
 		ullFreqHz = (unsigned long long)(favg_cHz);
 	}
   ullFreqHz_tune = ullFreqHz + 1407400000;
-  si5351.set_freq(ullFreqHz_tune, SI5351_CLK0);
+  if (control_si5351)
+    si5351.set_freq(ullFreqHz_tune, SI5351_CLK0);
   printf("# Tavg = %e, favg = %.20e %llu %llu\n", Tavg, favg, ullFreqHz, ullFreqHz_tune);
   }
   
@@ -179,7 +184,7 @@ int init_soundcard(char *snd_device, snd_pcm_t **capture_handle, snd_pcm_hw_para
     return(-1);
   }
 
-  unsigned int srate = 48000;
+  unsigned int srate = SAMPRATE;
   if (err = snd_pcm_hw_params_set_rate_near(*capture_handle, *hw_params, &srate, 0)) {
     perror("cannot set sample rate");
     return(-1);
