@@ -8,6 +8,7 @@
 #include <pthread.h>     
 #include <alsa/asoundlib.h>
 #include <math.h>
+#include <wiringPi.h>
 #include "si5351.h"
 
 /*
@@ -23,6 +24,9 @@
 #define SI5351_I2C_ADDRESS 0x60
 #define NUM_IQ 504
 #define MAX_SILENT_COUNT 2
+#define SAMPRATE 48000
+#define RESETPIN 17   // RESET is BCM pin 17 = physical pin 11
+#define nTXENPIN 23   // nTXEN is BCM pin 23 = physical pin 16
 
 #ifdef __arm__
 Si5351 si5351(SI5351_I2C_ADDRESS);
@@ -36,6 +40,8 @@ void set_TX_freq(uint64_t freq_cHz);
 
 int init_soundcard(char *snd_device, snd_pcm_t **capture_handle, snd_pcm_hw_params_t **hw_params);
 uint64_t meas_freq_cHz(void);
+
+void reset_cmod(void);
 
 // Thread function
 void* fsktx(void* data);
@@ -54,7 +60,7 @@ snd_pcm_uframes_t period_size;
 
 int main(int argc, char *argv[]) {
   // Behaviour variables
-  int rx_only = 0;		// If set, TX frequency is not modulated by server
+  int rx_only;		// If set, TX frequency is not modulated by server
   
   // Serial port variables
   int serdev0_filestream;
@@ -86,13 +92,27 @@ int main(int argc, char *argv[]) {
 
   // ALSA variables
   int err;
+  char *snd_device;
   
-  if (argc != 3) {
-    fprintf(stderr, "Usage: cmod-server <serial device> <ALSA device>\n");
+  if (argc != 3 && argc != 2) {
+    fprintf(stderr, "Usage: cmod-server <serial device> [ALSA device]\n");
+    fprintf(stderr, "  If only <serial device> is given, the server will not\n");
+    fprintf(stderr, "  modulate the Si5351 frequency during transmit cycles.\n");
     exit(1);
   }
   char *serial_device = argv[1];
-  char *snd_device = argv[2];
+
+  if (argc == 3) {
+    snd_device = argv[2];
+    rx_only = 0;
+    printf("Listening on serial device %s and ALSA device %s...\n", serial_device,
+      snd_device);
+  }
+  else { // Only serial device given
+    rx_only = 1;
+    printf("No TX modulation will be used.\n");
+    printf("Listening on serial device %s...\n", serial_device);
+  }
   
   // Open serial device
   serdev0_filestream = OpenSerDev(serial_device);
@@ -106,6 +126,14 @@ int main(int argc, char *argv[]) {
   si5351.output_enable(SI5351_CLK1, 1); // Not really required at power-on
 #endif
 
+  // Initialize GPIO and reset cmod
+  // Uses BCM numbering of the GPIOs and directly accesses the GPIO registers
+  wiringPiSetupGpio();
+  pinMode(RESETPIN, OUTPUT);
+  pinMode(nTXENPIN, OUTPUT);
+  reset_cmod();
+
+  if (!rx_only) {
   // Initialize ALSA
   if (err = init_soundcard(snd_device, &capture_handle, &hw_params)) {
     perror("Error initializing sound card");
@@ -118,7 +146,6 @@ int main(int argc, char *argv[]) {
   printf("# buffer size=%d, period size=%d\n", buffer_size, period_size);
  
   // Initiate TX modulator thread if needed
-  if (!rx_only) {
     if (pthread_create(&thread_id, NULL, fsktx, NULL) < 0) {
       perror("Error creating thread");
       exit(1);
@@ -142,10 +169,12 @@ int main(int argc, char *argv[]) {
 	if (memcmp(cmdbuf, "TX", 2) == 0) {
 	  if (cmdbuf[2] == '0') {
 	    tx = 0;
+      digitalWrite (nTXENPIN, HIGH);
 	    //XGpio_DiscreteWrite(&sdr_cfg_reg, GPIO_CH, curr_cfg & 0b011111111111111111);
 	  }
 	  else if (cmdbuf[2] == '1') {
 	    tx = 1;
+      digitalWrite (nTXENPIN, LOW);
 	    //XGpio_DiscreteWrite(&sdr_cfg_reg, GPIO_CH, curr_cfg | 0b100000000000000000);
 	  }
 	  else if (cmdbuf[2] == ';') {
@@ -277,9 +306,10 @@ int main(int argc, char *argv[]) {
 
   }
 
+  if (!rx_only) {
   snd_pcm_close(capture_handle);
   snd_pcm_hw_params_free(hw_params);
- 
+  }
   close(serdev0_filestream);
 
   printf("Exiting main thread\n");
@@ -516,7 +546,7 @@ uint64_t meas_freq_cHz(void) {
 
   int err;
   int k = 0, N = 0, found, eof = 0;
-  double dt = 1.0/48000.0;
+  double dt = 1.0/SAMPRATE;
   double m, dx, zA, zB, T, Tavg = 0, favg, favg_cHz;
   uint64_t ullFreqcHz = 0;	
   int32_t wav_data[NUM_IQ * 2];	/* L+R */
@@ -632,7 +662,7 @@ int init_soundcard(char *snd_device, snd_pcm_t **capture_handle, snd_pcm_hw_para
     return(-1);
   }
 
-  unsigned int srate = 48000;
+  unsigned int srate = SAMPRATE;
   if (err = snd_pcm_hw_params_set_rate_near(*capture_handle, *hw_params, &srate, 0)) {
     perror("Cannot set sample rate");
     return(-1);
@@ -666,4 +696,16 @@ int init_soundcard(char *snd_device, snd_pcm_t **capture_handle, snd_pcm_hw_para
   }
 
   return(0);
+}
+
+void reset_cmod(void) {
+  // Set pin mode (INPUT, OUTPUT, PWM_OUTPUT, GPIO_CLOCK)
+  digitalWrite (nTXENPIN, HIGH);
+  digitalWrite (RESETPIN, LOW);
+  delay(50);
+
+  digitalWrite (RESETPIN, HIGH);
+  delay(50);
+	
+  digitalWrite (RESETPIN, LOW);
 }

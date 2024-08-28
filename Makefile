@@ -27,7 +27,7 @@ serial-test: serial-test.c
 	$(GCC) -o $@ $^
 
 cmod-server: cmod-server.cpp si5351.h si5351.cpp
-	$(GPP) $(CPPFLAGS) -o $@ $^ -lpthread -lasound
+	$(GPP) $(CPPFLAGS) -o $@ $^ -lpthread -lasound -lwiringPi
 
 #checkpointers: checkpointers.c
 #	$(GCC) -o $@ $^
