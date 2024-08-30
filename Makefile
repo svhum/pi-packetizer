@@ -20,7 +20,7 @@ si5351test: si5351test.cpp si5351.h si5351.cpp
 sdr-receiver-hpsdr: sdr-receiver-hpsdr.c
 	$(GCC) $(CFLAGS) -o $@ $^ -lm -lpthread -lasound
 
-spitest: spitest.c
+spitest: spitest.c spi.h spi.c
 	$(GCC) -o $@ $^
 
 serial-test: serial-test.c
