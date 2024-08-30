@@ -11,7 +11,8 @@ int main(int argc, char *argv[])
   unsigned char rxdata[NUM_BYTES];
   unsigned char txdata[NUM_BYTES];
   uint32_t data_to_send = 0x12345678;
-  uint8_t *ptr = (uint8_t*) &data_to_send;
+  uint32_t data_received;
+  uint8_t *ptr;
   unsigned char spi_bitsPerWord = 8;
   unsigned int spi_speed = 1000000;   // 1 MHz
 
@@ -26,6 +27,7 @@ int main(int argc, char *argv[])
   // on the slave. Sending 0x12345678, debug LEDs should show 0x8.
   // Can experiment with the shift to confirm correct LED output.
   data_to_send = data_to_send >> 0;
+  ptr = (uint8_t*) &data_to_send;
   for (int k=0; k < NUM_BYTES; k++) {
     txdata[k] = *(ptr+3);
     ptr--;
@@ -39,9 +41,13 @@ int main(int argc, char *argv[])
       SpiWriteAndRead(&spi_cs0_fd, &txdata[0], &rxdata[0], NUM_BYTES, 0, spi_bitsPerWord,
                       spi_speed);
       usleep(500000);
-      for (int k = 0; k < NUM_BYTES; k++) 
+
+      data_received = 0;
+      for (int k = 0; k < NUM_BYTES; k++) {
         printf("Received: %x\n", rxdata[k]);
-      printf("\n");
+        data_received += (rxdata[k] << (3-k)*8);
+      }
+      printf("Assembled: 0x%x\n\n", data_received);
       usleep(500000);
   }
 
