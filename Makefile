@@ -38,6 +38,9 @@ reset-cmod: reset-cmod.c
 test-threads: test-threads.c
 	$(GCC) -o $@ $^ -lpthread
 
+i2ctest: i2ctest.c
+	$(GCC) -o $@ $^
+
 install: reset-cmod sdr-receiver-hpsdr
 	cp reset-cmod $(PREFIX)/bin
 	cp sdr-receiver-hpsdr $(PREFIX)/bin
