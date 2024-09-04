@@ -35,22 +35,24 @@ uint8_t i2c_write(int fd, uint8_t addr, uint8_t data)
 	return write(fd, buf, 2);
 }
 
-uint8_t i2c_read(int fd) //, uint8_t addr)
+int i2c_read(int fd) //, uint8_t addr)
 {
 	uint8_t reg_val[2];
+  int result;
 	unsigned char buf[256];
 	//buf[0] = addr;
 	//write(fd, buf, 1);
 	read(fd, &reg_val, 2);		// assume all read is always for a single byte
 	printf("%d, %d\n", reg_val[0], reg_val[1]);
-	return (int16_t)reg_val;
+  result = (reg_val[0] << 8) + reg_val[1];
+	return(result);
 }
 
 int main(void) {
   uint8_t reg_val = 0;	// assume I2C hardware is already connected and initialized
   int fd;
-  int bytesread;
-  uint16_t adcvalue;
+  int adcvalue;
+  double voltage, temp;
 	
   unsigned char buf[256];
   sprintf(buf, "/dev/i2c-1");		// fix I2C bus to 1 (can be changed later)
@@ -67,6 +69,8 @@ int main(void) {
 
   // Read sample
   adcvalue = i2c_read(fd);
-  printf("%d\n", adcvalue);
+  voltage = adcvalue/4096.0*5.05;
+  temp = (voltage*1000-500)/10;
+  printf("adcvalue=%d, voltage=%f, temp=%f\n", adcvalue, voltage, temp);
   close(fd);
 }
