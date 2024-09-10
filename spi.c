@@ -120,3 +120,30 @@ int SpiWriteAndRead (int *spi_cs_fd, unsigned char *TxData, unsigned char *RxDat
 
   return retVal;
 }
+
+uint32_t SpiWriteAndRead4 (int *spi_cs_fd, uint32_t data_to_send, unsigned char spi_bitsPerWord, unsigned int spi_speed) {
+  // Read and write exactly 4 bytes to/from SPI. RxData must point to an arrays of 4 unsigned chars.
+
+  unsigned char txdata[4];
+  unsigned char rxdata[4];
+  uint8_t *ptr;
+  uint32_t data_received = 0;
+
+  ptr = (uint8_t*) &data_to_send;
+  for (int k=0; k < 4; k++) {
+    txdata[k] = *(ptr+3);
+    ptr--;
+    //printf("Data to send [%d]: %x\n", k, txdata[k]);
+  }
+  usleep(500);
+
+  SpiWriteAndRead(spi_cs_fd, &txdata[0], &rxdata[0], 4, 0, spi_bitsPerWord,
+                  spi_speed);
+  
+  for (int k = 0; k < 4; k++) {
+    //printf("Received: %x\n", rxdata[k]);
+    data_received += (rxdata[k] << (3-k)*8);
+  }
+
+  return(data_received);
+}

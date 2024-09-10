@@ -13,5 +13,5 @@
 int SpiOpenPort (int spi_device, int *spi_cs_fd, unsigned char spi_mode, unsigned char spi_bitsPerWord, unsigned int spi_speed);
 int SpiClosePort (int spi_device, int *spi_cs_fd);
 int SpiWriteAndRead (int *spi_cs_fd, unsigned char *TxData, unsigned char *RxData, int Length, int LeaveCsLow, unsigned char spi_bitsPerWord, unsigned int spi_speed);
-
+uint32_t SpiWriteAndRead4 (int *spi_cs_fd, uint32_t data_to_send, unsigned char spi_bitsPerWord, unsigned int spi_speed);
 #endif
