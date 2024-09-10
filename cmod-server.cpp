@@ -10,6 +10,7 @@
 #include <math.h>
 #include <wiringPi.h>
 #include "si5351.h"
+#include "spi.h"
 
 /*
   Serial reference:
@@ -52,6 +53,7 @@ int mode = 2;			/* 0 = I/Q, 1 = LSB, 2 = USB, 12 = DUSB */
 unsigned long freq = 14074000;
 unsigned long freq_a = 14064000;
 int poll_pty = 1;
+uint32_t curr_cfg = FCENT;
 
 snd_pcm_t *capture_handle;
 snd_pcm_hw_params_t *hw_params;
@@ -79,7 +81,6 @@ int main(int argc, char *argv[]) {
   //unsigned long long ullFreq_cHz = freq_a*100;	
   
   // State variables
-  unsigned long curr_cfg;
   unsigned char tempmode;
   unsigned char ai = 0;
   unsigned char st = 0;
@@ -93,6 +94,11 @@ int main(int argc, char *argv[]) {
   // ALSA variables
   int err;
   char *snd_device;
+
+  // SPI variables
+  int spi_cs0_fd;				// File descriptor for the SPI device
+  unsigned char spi_bitsPerWord = 8;
+  unsigned int spi_speed = 1000000;   // 1 MHz
   
   if (argc != 3 && argc != 2) {
     fprintf(stderr, "Usage: cmod-server <serial device> [ALSA device]\n");
@@ -152,7 +158,13 @@ int main(int argc, char *argv[]) {
     }
     printf("Created new thread (%u)... \n", thread_id);
   }
-  
+
+  // Initialize SPI and set control register
+  SpiOpenPort(0, &spi_cs0_fd, SPI_MODE_0, spi_bitsPerWord, spi_speed);
+  usleep(1000);
+  SpiWriteAndRead4(&spi_cs0_fd, curr_cfg, spi_bitsPerWord, spi_speed);
+  usleep(1000);
+
   while (poll_pty) {
     count = read(serdev0_filestream, &cmdbuf_ch, 1);
     if (count < 0) {
@@ -170,11 +182,15 @@ int main(int argc, char *argv[]) {
 	  if (cmdbuf[2] == '0') {
 	    tx = 0;
       digitalWrite (nTXENPIN, HIGH);
+      curr_cfg = curr_cfg & 0b011111111111111111;
+      SpiWriteAndRead4(&spi_cs0_fd, curr_cfg, spi_bitsPerWord, spi_speed);
 	    //XGpio_DiscreteWrite(&sdr_cfg_reg, GPIO_CH, curr_cfg & 0b011111111111111111);
 	  }
 	  else if (cmdbuf[2] == '1') {
 	    tx = 1;
       digitalWrite (nTXENPIN, LOW);
+      curr_cfg = curr_cfg | 0b100000000000000000;
+      SpiWriteAndRead4(&spi_cs0_fd, curr_cfg, spi_bitsPerWord, spi_speed);
 	    //XGpio_DiscreteWrite(&sdr_cfg_reg, GPIO_CH, curr_cfg | 0b100000000000000000);
 	  }
 	  else if (cmdbuf[2] == ';') {
@@ -204,11 +220,15 @@ int main(int argc, char *argv[]) {
 		freq_b = FCENT + FCORR;
 		set_RX_freq(freq_a);
 		phasediff = freq_b*65536/FSAMP;
+    curr_cfg = (curr_cfg | 0b110000000000000000) | (phasediff & 0xffff);
+    SpiWriteAndRead4(&spi_cs0_fd, curr_cfg, spi_bitsPerWord, spi_speed);
 		//XGpio_DiscreteWrite(&sdr_cfg_reg, GPIO_CH, (curr_cfg & 0b110000000000000000) | (phasediff & 0xffff));
 	      }
 	      else { // Only DDS needs to change
 		freq_b = freq-freq_a+FCORR;
 		phasediff = freq_b*65536/FSAMP;
+    curr_cfg = (curr_cfg | 0b110000000000000000) | (phasediff & 0xffff);
+    SpiWriteAndRead4(&spi_cs0_fd, curr_cfg, spi_bitsPerWord, spi_speed);
 		//XGpio_DiscreteWrite(&sdr_cfg_reg, GPIO_CH, (curr_cfg & 0b110000000000000000) | (phasediff & 0xffff));
 	      }
 	    }
@@ -222,6 +242,8 @@ int main(int argc, char *argv[]) {
 	  else {
 	    freq_b = strtol(&cmdbuf[2], &ptr, 10);
 	    phasediff = freq_b*65536/FSAMP;
+      curr_cfg = (curr_cfg | 0b110000000000000000) | (phasediff & 0xffff);
+      SpiWriteAndRead4(&spi_cs0_fd, curr_cfg, spi_bitsPerWord, spi_speed);
 	    //XGpio_DiscreteWrite(&sdr_cfg_reg, GPIO_CH, (curr_cfg & 0b110000000000000000) | (phasediff & 0xffff));
 	  }
 	}
@@ -235,22 +257,33 @@ int main(int argc, char *argv[]) {
 	    tempmode = strtol(&cmdbuf[3], &ptr, 16);
 	    if (tempmode == 0) { // 0 = I/Q passthrough, not part of the CAT standard
 	      mode = 0;
+        // Set FB=0
+        //curr_cfg = curr_cfg & 0b11| 0b010000000000000000;
+        //SpiWriteAndRead4(&spi_cs0_fd, curr_cfg, spi_bitsPerWord, spi_speed);
 	      //XGpio_DiscreteWrite(&sdr_cfg_reg, GPIO_CH, curr_cfg | 0b010000000000000000);
 	    }
 	    else if (tempmode == 1) { // 1 = LSB; both USB and LSB use the same config bit since both go out the DAC
 	      mode = 1;
+        curr_cfg = curr_cfg & 0b101111111111111111;
+        SpiWriteAndRead4(&spi_cs0_fd, curr_cfg, spi_bitsPerWord, spi_speed);
 	      //XGpio_DiscreteWrite(&sdr_cfg_reg, GPIO_CH, curr_cfg & 0b101111111111111111);
 	    }
 	    else if (tempmode == 2) { // 2 = USB 
 	      mode = 2;
+        curr_cfg = curr_cfg & 0b101111111111111111;
+        SpiWriteAndRead4(&spi_cs0_fd, curr_cfg, spi_bitsPerWord, spi_speed);
 	      //XGpio_DiscreteWrite(&sdr_cfg_reg, GPIO_CH, curr_cfg & 0b101111111111111111);
 	    }
 	    else if (tempmode == 9) { // 9 = I/Q with DDC instead of RTTY-USB
 	      mode = 9;
+        curr_cfg = curr_cfg | 0b010000000000000000;
+        SpiWriteAndRead4(&spi_cs0_fd, curr_cfg, spi_bitsPerWord, spi_speed);
 	      //XGpio_DiscreteWrite(&sdr_cfg_reg, GPIO_CH, curr_cfg | 0b010000000000000000);
 	    }
 	    else if (tempmode == 12) { // 12 = 0xc = DATA-USB
 	      mode = 12;
+        curr_cfg = curr_cfg & 0b101111111111111111;
+        SpiWriteAndRead4(&spi_cs0_fd, curr_cfg, spi_bitsPerWord, spi_speed);
 	      //XGpio_DiscreteWrite(&sdr_cfg_reg, GPIO_CH, curr_cfg & 0b101111111111111111);
 	    }
 	  }
@@ -311,6 +344,7 @@ int main(int argc, char *argv[]) {
   snd_pcm_hw_params_free(hw_params);
   }
   close(serdev0_filestream);
+  SpiClosePort(0, &spi_cs0_fd);
 
   printf("Exiting main thread\n");
   pthread_exit(NULL);		/* terminate the thread */
