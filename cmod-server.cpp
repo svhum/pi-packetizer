@@ -54,7 +54,7 @@ int mode = 2;			/* 0 = I/Q, 1 = LSB, 2 = USB, 12 = DUSB */
 unsigned long freq = 14074000;
 unsigned long freq_a = 14064000;
 int poll_pty = 1;
-uint32_t curr_cfg = FCENT;
+uint32_t curr_cfg = FCENT;	// RX/TX = 0, SSB/IQ = 0 (receive SSB)
 
 snd_pcm_t *capture_handle;
 snd_pcm_hw_params_t *hw_params;
@@ -113,7 +113,7 @@ int main(int argc, char *argv[]) {
     snd_device = argv[2];
     rx_only = 0;
     printf("Listening on serial device %s and ALSA device %s...\n", serial_device,
-      snd_device);
+	   snd_device);
   }
   else { // Only serial device given
     rx_only = 1;
@@ -141,18 +141,18 @@ int main(int argc, char *argv[]) {
   reset_cmod();
 
   if (!rx_only) {
-  // Initialize ALSA
-  if (err = init_soundcard(snd_device, &capture_handle, &hw_params)) {
-    perror("Error initializing sound card");
-    exit(1);
-  }
-  if (err = snd_pcm_get_params(capture_handle, &buffer_size, &period_size)) {
-	perror("Error setting PCM parameters");
-	exit(1);
-  }
-  printf("# buffer size=%d, period size=%d\n", buffer_size, period_size);
+    // Initialize ALSA
+    if (err = init_soundcard(snd_device, &capture_handle, &hw_params)) {
+      perror("Error initializing sound card");
+      exit(1);
+    }
+    if (err = snd_pcm_get_params(capture_handle, &buffer_size, &period_size)) {
+      perror("Error setting PCM parameters");
+      exit(1);
+    }
+    printf("# buffer size=%d, period size=%d\n", buffer_size, period_size);
  
-  // Initiate TX modulator thread if needed
+    // Initiate TX modulator thread if needed
     if (pthread_create(&thread_id, NULL, fsktx, NULL) < 0) {
       perror("Error creating thread");
       exit(1);
@@ -178,21 +178,18 @@ int main(int argc, char *argv[]) {
       cmdbuf[cmdbuf_ptr++] = cmdbuf_ch;
       if (cmdbuf_ch == ';') { // Full command received
 	cmdbuf_ptr = 0;
-	//curr_cfg = XGpio_DiscreteRead(&sdr_cfg_reg, 1);
 	if (memcmp(cmdbuf, "TX", 2) == 0) {
 	  if (cmdbuf[2] == '0') {
 	    tx = 0;
-      digitalWrite (nTXENPIN, HIGH);
-      curr_cfg = curr_cfg & 0b011111111111111111;
-      SpiWriteAndRead4(&spi_cs0_fd, curr_cfg, spi_bitsPerWord, spi_speed);
-	    //XGpio_DiscreteWrite(&sdr_cfg_reg, GPIO_CH, curr_cfg & 0b011111111111111111);
+	    digitalWrite (nTXENPIN, HIGH);
+	    curr_cfg = curr_cfg & 0x1ffff;
+	    SpiWriteAndRead4(&spi_cs0_fd, curr_cfg, spi_bitsPerWord, spi_speed);
 	  }
 	  else if (cmdbuf[2] == '1') {
 	    tx = 1;
-      digitalWrite (nTXENPIN, LOW);
-      curr_cfg = curr_cfg | 0b100000000000000000;
-      SpiWriteAndRead4(&spi_cs0_fd, curr_cfg, spi_bitsPerWord, spi_speed);
-	    //XGpio_DiscreteWrite(&sdr_cfg_reg, GPIO_CH, curr_cfg | 0b100000000000000000);
+	    digitalWrite (nTXENPIN, LOW);
+	    curr_cfg = (curr_cfg & 0x1ffff) | 0x20000;
+	    SpiWriteAndRead4(&spi_cs0_fd, curr_cfg, spi_bitsPerWord, spi_speed);
 	  }
 	  else if (cmdbuf[2] == ';') {
 	    sprintf(txbuffer, "TX%d;", tx);
@@ -221,16 +218,14 @@ int main(int argc, char *argv[]) {
 		freq_b = FCENT + FCORR;
 		set_RX_freq(freq_a);
 		phasediff = freq_b*65536/FSAMP;
-    curr_cfg = (curr_cfg | 0b110000000000000000) | (phasediff & 0xffff);
-    SpiWriteAndRead4(&spi_cs0_fd, curr_cfg, spi_bitsPerWord, spi_speed);
-		//XGpio_DiscreteWrite(&sdr_cfg_reg, GPIO_CH, (curr_cfg & 0b110000000000000000) | (phasediff & 0xffff));
+		curr_cfg = (curr_cfg & 0x30000) | (phasediff & 0xffff);
+		SpiWriteAndRead4(&spi_cs0_fd, curr_cfg, spi_bitsPerWord, spi_speed);
 	      }
 	      else { // Only DDS needs to change
 		freq_b = freq-freq_a+FCORR;
 		phasediff = freq_b*65536/FSAMP;
-    curr_cfg = (curr_cfg | 0b110000000000000000) | (phasediff & 0xffff);
-    SpiWriteAndRead4(&spi_cs0_fd, curr_cfg, spi_bitsPerWord, spi_speed);
-		//XGpio_DiscreteWrite(&sdr_cfg_reg, GPIO_CH, (curr_cfg & 0b110000000000000000) | (phasediff & 0xffff));
+		curr_cfg = (curr_cfg & 0x30000) | (phasediff & 0xffff);
+		SpiWriteAndRead4(&spi_cs0_fd, curr_cfg, spi_bitsPerWord, spi_speed);
 	      }
 	    }
 	  }
@@ -243,12 +238,15 @@ int main(int argc, char *argv[]) {
 	  else {
 	    freq_b = strtol(&cmdbuf[2], &ptr, 10);
 	    phasediff = freq_b*65536/FSAMP;
-      curr_cfg = (curr_cfg | 0b110000000000000000) | (phasediff & 0xffff);
-      SpiWriteAndRead4(&spi_cs0_fd, curr_cfg, spi_bitsPerWord, spi_speed);
-	    //XGpio_DiscreteWrite(&sdr_cfg_reg, GPIO_CH, (curr_cfg & 0b110000000000000000) | (phasediff & 0xffff));
+	    curr_cfg = (curr_cfg & 0x30000) | (phasediff & 0xffff);
+	    SpiWriteAndRead4(&spi_cs0_fd, curr_cfg, spi_bitsPerWord, spi_speed);
 	  }
 	}
 
+	// Note on modes: 0 and 9 essentially pass I/Q through to a DDC. The intent was
+	// that if the DDC is set with a 0 frequency LO (freq_b=0) then passthrough occurs,
+	// while mode 9 would retain a nonzero DDC frequency, and potentially due some
+	// filtering as well. But for now these modes behave identically.
 	else if (memcmp(cmdbuf, "MD0", 3) == 0) {
 	  if (cmdbuf[3] == ';') { // Query is MD0;
 	    sprintf(txbuffer, "MD0%x;", mode);
@@ -258,34 +256,30 @@ int main(int argc, char *argv[]) {
 	    tempmode = strtol(&cmdbuf[3], &ptr, 16);
 	    if (tempmode == 0) { // 0 = I/Q passthrough, not part of the CAT standard
 	      mode = 0;
-        // Set FB=0
-        //curr_cfg = curr_cfg & 0b11| 0b010000000000000000;
-        //SpiWriteAndRead4(&spi_cs0_fd, curr_cfg, spi_bitsPerWord, spi_speed);
-	      //XGpio_DiscreteWrite(&sdr_cfg_reg, GPIO_CH, curr_cfg | 0b010000000000000000);
+	      curr_cfg = (curr_cfg & 0x2ffff) | 0x10000;
+	      SpiWriteAndRead4(&spi_cs0_fd, curr_cfg, spi_bitsPerWord, spi_speed);
 	    }
 	    else if (tempmode == 1) { // 1 = LSB; both USB and LSB use the same config bit since both go out the DAC
 	      mode = 1;
-        curr_cfg = curr_cfg & 0b101111111111111111;
-        SpiWriteAndRead4(&spi_cs0_fd, curr_cfg, spi_bitsPerWord, spi_speed);
+	      curr_cfg = curr_cfg & 0x2ffff;
+	      SpiWriteAndRead4(&spi_cs0_fd, curr_cfg, spi_bitsPerWord, spi_speed);
 	      //XGpio_DiscreteWrite(&sdr_cfg_reg, GPIO_CH, curr_cfg & 0b101111111111111111);
 	    }
 	    else if (tempmode == 2) { // 2 = USB 
 	      mode = 2;
-        curr_cfg = curr_cfg & 0b101111111111111111;
-        SpiWriteAndRead4(&spi_cs0_fd, curr_cfg, spi_bitsPerWord, spi_speed);
+	      curr_cfg = curr_cfg & 0x2ffff;
+	      SpiWriteAndRead4(&spi_cs0_fd, curr_cfg, spi_bitsPerWord, spi_speed);
 	      //XGpio_DiscreteWrite(&sdr_cfg_reg, GPIO_CH, curr_cfg & 0b101111111111111111);
 	    }
-	    else if (tempmode == 9) { // 9 = I/Q with DDC instead of RTTY-USB
+	    else if (tempmode == 9) { // 9 = I/Q with DDC instead of RTTY-USB;
 	      mode = 9;
-        curr_cfg = curr_cfg | 0b010000000000000000;
-        SpiWriteAndRead4(&spi_cs0_fd, curr_cfg, spi_bitsPerWord, spi_speed);
-	      //XGpio_DiscreteWrite(&sdr_cfg_reg, GPIO_CH, curr_cfg | 0b010000000000000000);
+	      curr_cfg = (curr_cfg & 0x2ffff) | 0x10000;
+	      SpiWriteAndRead4(&spi_cs0_fd, curr_cfg, spi_bitsPerWord, spi_speed);
 	    }
 	    else if (tempmode == 12) { // 12 = 0xc = DATA-USB
 	      mode = 12;
-        curr_cfg = curr_cfg & 0b101111111111111111;
-        SpiWriteAndRead4(&spi_cs0_fd, curr_cfg, spi_bitsPerWord, spi_speed);
-	      //XGpio_DiscreteWrite(&sdr_cfg_reg, GPIO_CH, curr_cfg & 0b101111111111111111);
+	      curr_cfg = curr_cfg & 0x2ffff;
+	      SpiWriteAndRead4(&spi_cs0_fd, curr_cfg, spi_bitsPerWord, spi_speed);
 	    }
 	  }
 	}
@@ -341,8 +335,8 @@ int main(int argc, char *argv[]) {
   }
 
   if (!rx_only) {
-  snd_pcm_close(capture_handle);
-  snd_pcm_hw_params_free(hw_params);
+    snd_pcm_close(capture_handle);
+    snd_pcm_hw_params_free(hw_params);
   }
   close(serdev0_filestream);
   SpiClosePort(0, &spi_cs0_fd);
@@ -514,10 +508,10 @@ void* fsktx(void* data)
 	printf("Entering TX mode, outputs_enabled = %d\n", outputs_enabled);
       }
      
-	 ullFreqcHz = meas_freq_cHz();
+      ullFreqcHz = meas_freq_cHz();
 
       if (ullFreqcHz == 0) {
-			  silent_count++;
+	silent_count++;
 	// Disable Si5351 output
 	if (outputs_enabled == 1 && silent_count > MAX_SILENT_COUNT) {
 	  printf("Silent message signal, disabling PLL outputs\n");
@@ -542,7 +536,7 @@ void* fsktx(void* data)
 	  outputs_enabled = 1;
 	}
 
-    //printf("# Tavg = %e, favg = %.20e %llu %llu\n", Tavg, favg, ullFreqcHz, ullFreqcHz_tune);
+	//printf("# Tavg = %e, favg = %.20e %llu %llu\n", Tavg, favg, ullFreqcHz, ullFreqcHz_tune);
 	printf("# freq = %llu, freq_tune = %llu\n", ullFreqcHz, ullFreqcHz_tune);
       }
 
@@ -586,87 +580,87 @@ uint64_t meas_freq_cHz(void) {
   uint64_t ullFreqcHz = 0;	
   int32_t wav_data[NUM_IQ * 2];	/* L+R */
 
-      // Read from sound card
-      if ((err = snd_pcm_readi(capture_handle, wav_data, NUM_IQ)) != NUM_IQ) {
-			  fprintf(stderr, "err = %d\n", err);
-	perror("Read from audio interface failed");
-	if (err == -32) // Broken pipe
-	  {
-	    if (err = snd_pcm_prepare(capture_handle)) {
-	      perror("Cannot prepare audio interface for use");
-	      exit(1);
-	    }
-	  }
-	else
-	 exit(1);
+  // Read from sound card
+  if ((err = snd_pcm_readi(capture_handle, wav_data, NUM_IQ)) != NUM_IQ) {
+    fprintf(stderr, "err = %d\n", err);
+    perror("Read from audio interface failed");
+    if (err == -32) // Broken pipe
+      {
+	if (err = snd_pcm_prepare(capture_handle)) {
+	  perror("Cannot prepare audio interface for use");
+	  exit(1);
+	}
       }
+    else
+      exit(1);
+  }
 
-      // Find period
-      while (!eof) {
-	// Find first positive-going zero crossing
-	found = 0;
-	while (!found && !eof) {
-	  if (wav_data[k+2] >= 0 && wav_data[k] < 0)
-	    found = 1;
-	  else { 
-	    if (k+4 < NUM_IQ*2)
-	      k += 2;
-	    else {
-	      //printf("EOF1: k = %d\n", k);
-	      eof = 1;
-	    }
-	  }
+  // Find period
+  while (!eof) {
+    // Find first positive-going zero crossing
+    found = 0;
+    while (!found && !eof) {
+      if (wav_data[k+2] >= 0 && wav_data[k] < 0)
+	found = 1;
+      else { 
+	if (k+4 < NUM_IQ*2)
+	  k += 2;
+	else {
+	  //printf("EOF1: k = %d\n", k);
+	  eof = 1;
 	}
-	//printf("# First zero crossing @ %d: (%d, %d)\n", k/2, wav_data[k]/2, wav_data[k+2]/2);
-	if (!eof) {	
-	  m = (wav_data[k+2] - wav_data[k]) / dt;
-	  dx = -wav_data[k]/m;
-	  zA = k/2*dt+dx;
-	}
-
-	// Find next positive-going zero crossing
-	found = 0;
-	k += 2;
-	while (!found && !eof) {
-	  if (wav_data[k+2] >= 0 && wav_data[k] < 0)
-	    found = 1;
-	  else {
-	    if (k+4 < NUM_IQ*2)
-	      k += 2;
-	    else {
-	      //printf("EOF2: k = %d\n\n", k);
-	      eof = 1;
-	    }
-	  }	
-	}
-	//printf("# Second zero crossing @ %d: (%d, %d)\n", k/2, wav_data[k]/2, wav_data[k+2]/2);
-	if (!eof) {
-	  m = (wav_data[k+2] - wav_data[k]) / dt;
-	  dx = -wav_data[k]/m;
-	  zB = k/2*dt+dx;
-	  T = zB-zA;
-	  Tavg += T;
-	  N += 1;
-	}
-
-	if (!eof && 0)
-	  printf("# k = %4d, T = %e, f = %e\n", k, T, 1/T);
-
-	k += 2;
       }
-      if (N == 0) {
-	Tavg = 0;
-	favg = 0;
-	ullFreqcHz = 0;
-      }
+    }
+    //printf("# First zero crossing @ %d: (%d, %d)\n", k/2, wav_data[k]/2, wav_data[k+2]/2);
+    if (!eof) {	
+      m = (wav_data[k+2] - wav_data[k]) / dt;
+      dx = -wav_data[k]/m;
+      zA = k/2*dt+dx;
+    }
+
+    // Find next positive-going zero crossing
+    found = 0;
+    k += 2;
+    while (!found && !eof) {
+      if (wav_data[k+2] >= 0 && wav_data[k] < 0)
+	found = 1;
       else {
-	Tavg /= N;
-	favg = 1/Tavg;
-	favg_cHz = round(favg * 100);
-	ullFreqcHz = (unsigned long long)(favg_cHz);
-      }
+	if (k+4 < NUM_IQ*2)
+	  k += 2;
+	else {
+	  //printf("EOF2: k = %d\n\n", k);
+	  eof = 1;
+	}
+      }	
+    }
+    //printf("# Second zero crossing @ %d: (%d, %d)\n", k/2, wav_data[k]/2, wav_data[k+2]/2);
+    if (!eof) {
+      m = (wav_data[k+2] - wav_data[k]) / dt;
+      dx = -wav_data[k]/m;
+      zB = k/2*dt+dx;
+      T = zB-zA;
+      Tavg += T;
+      N += 1;
+    }
 
-	  return(ullFreqcHz);
+    if (!eof && 0)
+      printf("# k = %4d, T = %e, f = %e\n", k, T, 1/T);
+
+    k += 2;
+  }
+  if (N == 0) {
+    Tavg = 0;
+    favg = 0;
+    ullFreqcHz = 0;
+  }
+  else {
+    Tavg /= N;
+    favg = 1/Tavg;
+    favg_cHz = round(favg * 100);
+    ullFreqcHz = (unsigned long long)(favg_cHz);
+  }
+
+  return(ullFreqcHz);
 }
 
 int init_soundcard(char *snd_device, snd_pcm_t **capture_handle, snd_pcm_hw_params_t **hw_params) {
@@ -711,7 +705,7 @@ int init_soundcard(char *snd_device, snd_pcm_t **capture_handle, snd_pcm_hw_para
   snd_pcm_uframes_t period = NUM_IQ;
   int dir = 0;
   if (err = snd_pcm_hw_params_set_period_size_near(*capture_handle, *hw_params, &period, &dir)) {
-     perror("Cannot set period");
+    perror("Cannot set period");
     return(-1);
   }
  
