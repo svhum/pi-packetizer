@@ -19,7 +19,8 @@
 
 // Constants
 #define FSAMP 48000
-#define FCORR 728
+// Do not set FCORR=728, phasediff will not work with SSB modulator IP?
+#define FCORR 0
 #define FCENT 10000
 #define MAX_DF 12000
 #define SI5351_I2C_ADDRESS 0x60
@@ -75,8 +76,8 @@ int main(int argc, char *argv[]) {
   unsigned char txbuffer[128];
 
   // Frequency variables
-  unsigned long freq_b = FCENT+FCORR;
-  unsigned long phasediff = freq_b*65536/FSAMP;
+  uint16_t freq_b = FCENT+FCORR;
+  uint16_t phasediff = freq_b*65536/FSAMP;
   char *ptr;
   //unsigned long long ullFreq_cHz = freq_a*100;	
   
@@ -159,7 +160,7 @@ int main(int argc, char *argv[]) {
     printf("Created new thread (%u)... \n", thread_id);
   }
 
-  // Initialize SPI and set control register
+  // Initialize SPI and set control register: SSB, FCENT+FCORR
   SpiOpenPort(0, &spi_cs0_fd, SPI_MODE_0, spi_bitsPerWord, spi_speed);
   usleep(1000);
   SpiWriteAndRead4(&spi_cs0_fd, curr_cfg, spi_bitsPerWord, spi_speed);

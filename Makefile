@@ -26,7 +26,7 @@ spitest: spitest.c spi.h spi.c
 serial-test: serial-test.c
 	$(GCC) -o $@ $^
 
-cmod-server: cmod-server.cpp si5351.h si5351.cpp
+cmod-server: cmod-server.cpp si5351.h si5351.cpp spi.h spi.c
 	$(GPP) $(CPPFLAGS) -o $@ $^ -lpthread -lasound -lwiringPi
 
 #checkpointers: checkpointers.c
