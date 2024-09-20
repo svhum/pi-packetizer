@@ -131,6 +131,7 @@ int main(int argc, char *argv[]) {
   set_RX_freq(freq_a);
   si5351.output_enable(SI5351_CLK0, 1); // Not really required at power-on
   si5351.output_enable(SI5351_CLK1, 1); // Not really required at power-on
+  si5351.output_enable(SI5351_CLK2, 0); // Not really required at power-on
 #endif
 
   // Initialize GPIO and reset cmod
@@ -472,21 +473,8 @@ void set_TX_freq(uint64_t freq_cHz) {
     return;
 
 #ifdef __arm__
-  //si5351.set_freq_manual(freq_cHz, freq_cHz*pll_div, SI5351_CLK0);
-  //si5351.set_freq_manual(freq_cHz, freq_cHz*pll_div, SI5351_CLK1);
-  //si5351.set_phase(SI5351_CLK0, 0); 
-  //si5351.set_phase(SI5351_CLK1, 2*pll_div);
-
-  // Restore phase shift to 0 and then invert outputs
-  si5351.set_phase(SI5351_CLK0, 0); 
-  si5351.set_phase(SI5351_CLK1, 0);
-  si5351.pll_reset(SI5351_PLLA);
-  si5351.set_clock_invert(SI5351_CLK0, 0);
-  si5351.set_clock_invert(SI5351_CLK1, 1);
-
   // Set TX frequency
-  si5351.set_freq(freq_cHz, SI5351_CLK0);
-  si5351.set_freq(freq_cHz, SI5351_CLK1);
+  si5351.set_freq(freq_cHz, SI5351_CLK2);
 #endif
   return;
 }
@@ -494,7 +482,7 @@ void set_TX_freq(uint64_t freq_cHz) {
 void* fsktx(void* data)
 {
   uint64_t ullFreqcHz_tune, ullFreqcHz;	
-  int outputs_enabled = 1, entered_tx = 0;
+  int outputs_enabled = 0, entered_tx = 0;
   int silent_count;
 
   // Initiate thread
@@ -517,8 +505,7 @@ void* fsktx(void* data)
 	  printf("Silent message signal, disabling PLL outputs\n");
 	  outputs_enabled = 0;
 #ifdef __arm__
-	  si5351.output_enable(SI5351_CLK0, 0);
-	  si5351.output_enable(SI5351_CLK1, 0);
+	  si5351.output_enable(SI5351_CLK2, 0);
 #endif
 	}
       }
@@ -530,8 +517,7 @@ void* fsktx(void* data)
 #endif
 	if (outputs_enabled == 0) {
 #ifdef __arm__
-	  si5351.output_enable(SI5351_CLK0, 1);
-	  si5351.output_enable(SI5351_CLK1, 1);
+	  si5351.output_enable(SI5351_CLK2, 1);
 #endif
 	  outputs_enabled = 1;
 	}
@@ -544,23 +530,11 @@ void* fsktx(void* data)
     else { 			// tx == 0, we are in receive mode
       if (entered_tx == 1) {
 	// We previously were transmitting and now going back to receive mode.
-	// Restore RX frequency and phase.
 	printf("Returning to RX mode\n");
 	entered_tx = 0;
+	outputs_enabled = 0;
 #ifdef __arm__
-	if (mode == 0)  // For IQ passthrough, do not set DDS explicitly
-	  set_RX_freq(freq);
-	else
-	  set_RX_freq(freq_a);
-#endif
-      }
-      if (outputs_enabled == 0) {
-	// Outputs might have been previously disabled by a silent TX message signal; re-enable
-	printf("Re-enabling PLL outputs\n");
-	outputs_enabled = 1;
-#ifdef __arm__
-	si5351.output_enable(SI5351_CLK0, 1);
-	si5351.output_enable(SI5351_CLK1, 1);
+	si5351.output_enable(SI5351_CLK2, 0);
 #endif
       }
       usleep(1000);
