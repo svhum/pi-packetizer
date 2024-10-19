@@ -15,7 +15,10 @@ freqmeas: freqmeas.cpp si5351.h si5351.cpp
 	$(GPP) $(CPPFLAGS) -o $@ $^ -lasound
 
 si5351test: si5351test.cpp si5351.h si5351.cpp
-	$(GPP) $(CPPFLAGS) -o $@ $^
+	$(GPP) $(CPPFLAGS) -o $@ $^ -lwiringPi
+
+si5351off: si5351off.cpp si5351.h si5351.cpp
+	$(GPP) $(CPPFLAGS) -o $@ $^ -lwiringPi
 
 sdr-receiver-hpsdr: sdr-receiver-hpsdr.c
 	$(GCC) $(CFLAGS) -o $@ $^ -lm -lpthread -lasound
