@@ -28,7 +28,8 @@
 #define MAX_SILENT_COUNT 2
 #define SAMPRATE 48000
 #define RESETPIN 17   // RESET is BCM pin 17 = physical pin 11
-#define nTXENPIN 23   // nTXEN is BCM pin 23 = physical pin 16
+#define TXENPIN 23    // TXEN is BCM pin 23 = physical pin 16
+#define KEYPIN 24     // KEY is BCM pin 24 = physical pin 18
 
 #ifdef __arm__
 Si5351 si5351(SI5351_I2C_ADDRESS);
@@ -124,22 +125,24 @@ int main(int argc, char *argv[]) {
   // Open serial device
   serdev0_filestream = OpenSerDev(serial_device);
 
-#ifdef __arm__
-  // Initialize and set Si5351
-  si5351.init(SI5351_CRYSTAL_LOAD_8PF, 0, 0);
-  sleep(1);
-  set_RX_freq(freq_a);
-  si5351.output_enable(SI5351_CLK0, 1); // Not really required at power-on
-  si5351.output_enable(SI5351_CLK1, 1); // Not really required at power-on
-  si5351.output_enable(SI5351_CLK2, 0); // Not really required at power-on
-#endif
-
   // Initialize GPIO and reset cmod
   // Uses BCM numbering of the GPIOs and directly accesses the GPIO registers
   wiringPiSetupGpio();
   pinMode(RESETPIN, OUTPUT);
-  pinMode(nTXENPIN, OUTPUT);
+  pinMode(TXENPIN, OUTPUT);
+  pinMode(KEYPIN, OUTPUT);
   reset_cmod();
+
+#ifdef __arm__
+  // Initialize and set Si5351
+  si5351.init(SI5351_CRYSTAL_LOAD_8PF, 0, 0);
+  //si5351.output_enable(SI5351_CLK0, 0); // Not really required at power-on
+  //si5351.output_enable(SI5351_CLK1, 0); // Not really required at power-on
+  //si5351.output_enable(SI5351_CLK2, 0); // Not really required at power-on
+  sleep(1);
+  si5351.set_ms_source(SI5351_CLK2, SI5351_PLLB); // TX to be on different PLL
+  set_RX_freq(freq_a);
+#endif
 
   if (!rx_only) {
     // Initialize ALSA
@@ -182,13 +185,13 @@ int main(int argc, char *argv[]) {
 	if (memcmp(cmdbuf, "TX", 2) == 0) {
 	  if (cmdbuf[2] == '0') {
 	    tx = 0;
-	    digitalWrite (nTXENPIN, HIGH);
+	    digitalWrite (TXENPIN, LOW);
 	    curr_cfg = curr_cfg & 0x1ffff;
 	    SpiWriteAndRead4(&spi_cs0_fd, curr_cfg, spi_bitsPerWord, spi_speed);
 	  }
 	  else if (cmdbuf[2] == '1') {
 	    tx = 1;
-	    digitalWrite (nTXENPIN, LOW);
+	    digitalWrite (TXENPIN, HIGH);
 	    curr_cfg = (curr_cfg & 0x1ffff) | 0x20000;
 	    SpiWriteAndRead4(&spi_cs0_fd, curr_cfg, spi_bitsPerWord, spi_speed);
 	  }
@@ -506,6 +509,7 @@ void* fsktx(void* data)
 	  outputs_enabled = 0;
 #ifdef __arm__
 	  si5351.output_enable(SI5351_CLK2, 0);
+    digitalWrite (KEYPIN, LOW);
 #endif
 	}
       }
@@ -513,11 +517,13 @@ void* fsktx(void* data)
 	silent_count = 0;
 	ullFreqcHz_tune = ullFreqcHz + freq*100;
 #ifdef __arm__
+  printf("Calling set_TX_freq()...\n");
 	set_TX_freq(ullFreqcHz_tune);
 #endif
 	if (outputs_enabled == 0) {
 #ifdef __arm__
 	  si5351.output_enable(SI5351_CLK2, 1);
+    digitalWrite (KEYPIN, HIGH);
 #endif
 	  outputs_enabled = 1;
 	}
@@ -535,6 +541,7 @@ void* fsktx(void* data)
 	outputs_enabled = 0;
 #ifdef __arm__
 	si5351.output_enable(SI5351_CLK2, 0);
+  digitalWrite (KEYPIN, LOW);
 #endif
       }
       usleep(1000);
@@ -703,7 +710,9 @@ int init_soundcard(char *snd_device, snd_pcm_t **capture_handle, snd_pcm_hw_para
 
 void reset_cmod(void) {
   // Set pin mode (INPUT, OUTPUT, PWM_OUTPUT, GPIO_CLOCK)
-  digitalWrite (nTXENPIN, HIGH);
+  digitalWrite (TXENPIN, LOW);
+  digitalWrite (KEYPIN, LOW);
+
   digitalWrite (RESETPIN, LOW);
   delay(50);
 
