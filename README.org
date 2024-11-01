@@ -1,5 +1,8 @@
 #+STARTUP: indent
 * pi-packetizer
+This repository contains a suite of programs for controlling a Cmod-based RF software-defined radio front-end using a Raspberry Pi.
+
+** pi-packetizer
 ~pi-packetizer~ is a server program for packetizing data on Raspberry Pi peripheral interfaces into the [[https://github.com/TAPR/OpenHPSDR-SVN/raw/master/Metis/Documentation/Metis-%20How%20it%20works_V1.33.pdf][Metis format]], which itself is based on the [[https://github.com/TAPR/OpenHPSDR-SVN/raw/master/Documentation/USB_protocol_V1.58.doc][HPSDR USB data protocol]]. Currently, it supports a single receiver on the I2S interface. The goal is to use the Raspberry Pi in conjunction with a FPGA-based software-defined radio (SDR) front-end, similar to the [[https://github.com/pa3gsb/Radioberry-2.x][Radioberry]], but with more flexible interchip communication interfaces, and custom SDR gateware.
 
 Future plans for the packetizer include:
@@ -7,18 +10,16 @@ Future plans for the packetizer include:
 - Supporting multiple receivers via SPI
 
 This work is largely based on Pavel Demin's [[https://github.com/pavel-demin/red-pitaya-notes][HPSDR implementations]] for the Red Pitaya.
-
-There are a few other utilities bundled with ~pi-packetizer.
 ** cmod-server
 ~cmod-server~ allows the Raspberry Pi to control the Cmod SDR. It facilitates this control by acting as both a CAT command server, and a sound server listening for tones to transmit. ~cmod-server~'s responsibilities are to:
 1. Control the Si5351 PLL chip over I2C, in response to CAT commands as well as the frequency of the tones (if in transmit mode);
 2. Change the frequency of the DDS in the Cmod over SPI; 
-3. Use CAT to control the transmit/receive state of the radio and corresponding behaviour of the Si5351 chip; and
-4. Emulate the required CAT command functionality of an FT-891 radio so that a minimum set of supported CAT commands is implemented to support functioning of programs such as WSJT-X.
+3. Use CAT to control the transmit/receive state of the radio and corresponding behaviour of the Si5351 chip;
+4. Emulate the required CAT command functionality of an FT-891 radio so that a minimum set of supported CAT commands is implemented to support functioning of programs such as WSJT-X;
     
-CAT commands are usually sent by client programs (such as WSJT-X) via a virtual serial device (pseudo terminal), though it is possible for the server to listen on an actual serial port if desired. The settings are 115200 bps, 8N1, no flow control. If using a pseudo terminal (pty), a shell script ~setup-serial.sh~ is provided that uses ~socat~ to create ptys; one of these can be used for ~cmod-server~.
+CAT commands are usually sent by client programs (such as WSJT-X) via a virtual serial device (pseudo terminal), though it is possible for the server to listen on an actual serial port if desired. The settings are 115200 bps, 8N1, no flow control (note the baud rate is irrelevant). If using a pseudo terminal (pty), a shell script ~setup-serial.sh~ is provided that uses ~socat~ to create ptys; one of these can be used for ~cmod-server~. This script will create two virtual serial ports in ~$HOME$/dev~: ~ttyS1~ and ~ttyS2~. These are symbolically linked to pseudo terminals actually created in ~/dev/pts~, but the links help ensure the same virtual serial ports can be hard-coded in the call to ~cmod-server~ as well as in client programs, e.g. WSJT-X.
 
-The sound sound server listens on an ALSA audio device for frequency tones. When the Cmod SDR is in transmit mode, it determines the frequency of the tones, and adjusts the frequency of the Si5351 chip, which is intended to be used as the (FSK) source. The ALSA device can be physical or virtual, but ~cmod-server~ is intended to be used with a virtual (loopback) sound device so that client programs can output the message signal to the loopback device and ~cmod-server~ will intercept this message signal for determining the frequency to transmit. For this purpose, the ALSA ~snd-aloop~ kernel module should be used and is expected to be loaded.
+The sound sound server listens on an ALSA audio device for frequency tones. When the Cmod SDR is in transmit mode, it determines the frequency of the tones, and adjusts the frequency of the Si5351 chip, which is intended to be used as the (FSK) source. The ALSA device can be physical or virtual, but ~cmod-server~ is intended to be used with a virtual (loopback) sound device so that client programs can output the message signal to the loopback device and ~cmod-server~ will intercept this message signal for determining the frequency to transmit. For this purpose, the ALSA ~snd-aloop~ kernel module should be used and is expected to be loaded. The frequency of the Si5351 CLK2 output is changed (offset) according to the frequency of the audio signal.
 
 ~cmod-server~ is invoked as follows:
 
@@ -26,9 +27,9 @@ The sound sound server listens on an ALSA audio device for frequency tones. When
 
 For example,
 
-~cmod-server /dev/pts/1 hw:2,1~
+~cmod-server $HOME/dev/ttyS2 hw:2,1~
 
-will cause ~cmod-server~ to listen for CAT commands on ~/dev/pts/1~ and use the ALSA device ~hw:2,1~, where card 2 is assumed to be the loopback device. The cards available to ALSA can be found by running
+will cause ~cmod-server~ to listen for CAT commands on ~$HOME/dev/ttyS2~ and use the ALSA device ~hw:2,1~, where card 2 is assumed to be the loopback device. The cards available to ALSA can be found by running
 
 ~cat /proc/asound/cards~
 
@@ -36,3 +37,7 @@ If you need to change the default sound card, use
 
 ~pactl list short sinks~
 ~pactl set-default-sink alsa_output.platform-snd_aloop.0.analog-stereo~
+
+The loopback device, ~snd-aloop~, should be included in ~/etc/modules.conf~ so that it is loaded at boot time. ~i2c-dev~ is also needed in ~modules.conf~.
+
+The process of setting up the serial ports and running ~cmod-server~ is automated using a shell script ~start-cmod.sh~.
