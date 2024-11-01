@@ -136,9 +136,6 @@ int main(int argc, char *argv[]) {
 #ifdef __arm__
   // Initialize and set Si5351
   si5351.init(SI5351_CRYSTAL_LOAD_8PF, 0, 0);
-  //si5351.output_enable(SI5351_CLK0, 0); // Not really required at power-on
-  //si5351.output_enable(SI5351_CLK1, 0); // Not really required at power-on
-  //si5351.output_enable(SI5351_CLK2, 0); // Not really required at power-on
   sleep(1);
   si5351.set_ms_source(SI5351_CLK2, SI5351_PLLB); // TX to be on different PLL
   set_RX_freq(freq_a);
@@ -267,13 +264,11 @@ int main(int argc, char *argv[]) {
 	      mode = 1;
 	      curr_cfg = curr_cfg & 0x2ffff;
 	      SpiWriteAndRead4(&spi_cs0_fd, curr_cfg, spi_bitsPerWord, spi_speed);
-	      //XGpio_DiscreteWrite(&sdr_cfg_reg, GPIO_CH, curr_cfg & 0b101111111111111111);
 	    }
 	    else if (tempmode == 2) { // 2 = USB 
 	      mode = 2;
 	      curr_cfg = curr_cfg & 0x2ffff;
 	      SpiWriteAndRead4(&spi_cs0_fd, curr_cfg, spi_bitsPerWord, spi_speed);
-	      //XGpio_DiscreteWrite(&sdr_cfg_reg, GPIO_CH, curr_cfg & 0b101111111111111111);
 	    }
 	    else if (tempmode == 9) { // 9 = I/Q with DDC instead of RTTY-USB;
 	      mode = 9;
@@ -509,7 +504,7 @@ void* fsktx(void* data)
 	  outputs_enabled = 0;
 #ifdef __arm__
 	  si5351.output_enable(SI5351_CLK2, 0);
-    digitalWrite (KEYPIN, LOW);
+	  digitalWrite (KEYPIN, LOW);
 #endif
 	}
       }
@@ -517,13 +512,13 @@ void* fsktx(void* data)
 	silent_count = 0;
 	ullFreqcHz_tune = ullFreqcHz + freq*100;
 #ifdef __arm__
-  printf("Calling set_TX_freq()...\n");
+	printf("Calling set_TX_freq()...\n");
 	set_TX_freq(ullFreqcHz_tune);
 #endif
 	if (outputs_enabled == 0) {
 #ifdef __arm__
 	  si5351.output_enable(SI5351_CLK2, 1);
-    digitalWrite (KEYPIN, HIGH);
+	  digitalWrite (KEYPIN, HIGH);
 #endif
 	  outputs_enabled = 1;
 	}
@@ -541,7 +536,7 @@ void* fsktx(void* data)
 	outputs_enabled = 0;
 #ifdef __arm__
 	si5351.output_enable(SI5351_CLK2, 0);
-  digitalWrite (KEYPIN, LOW);
+	digitalWrite (KEYPIN, LOW);
 #endif
       }
       usleep(1000);
