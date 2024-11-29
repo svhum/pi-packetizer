@@ -44,6 +44,12 @@ test-threads: test-threads.c
 i2ctest: i2ctest.c
 	$(GCC) -o $@ $^
 
+iambic: iambic.c tonegen.h tonegen.c defs.h
+	$(GCC) $(CFLAGS) -o $@ $^ -lpthread -lasound -lpigpio -lm -lwiringPi
+
+mytone: mytone.c tonegen.h tonegen.c defs.h
+	$(GCC) $(CFLAGS) -o $@ $^ -lpthread -lasound -lm
+
 install: reset-cmod sdr-receiver-hpsdr
 	cp reset-cmod $(PREFIX)/bin
 	cp sdr-receiver-hpsdr $(PREFIX)/bin
